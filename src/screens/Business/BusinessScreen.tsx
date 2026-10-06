@@ -1,0 +1,1 @@
+import { View, Text } from 'react-native'; export default function BusinessScreen() { return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Business Page</Text></View>; }
