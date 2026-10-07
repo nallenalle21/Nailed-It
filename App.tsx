@@ -6,16 +6,19 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from './src/services/supabase';
 
+import WorkLocations from './src/screens/Profile/Business/WorkLocations';
 import LoginScreen from './src/screens/Login/LoginScreen';
+import Certificates from './src/screens/Profile/Business/Certificates';
+import Bookkeeping from './src/screens/Profile/Business/Bookkeeping';
 
-// Creator Screens
 import ExploreCreator from './src/screens/Explore/ExploreCreator';
 import WishlistCreator from './src/screens/Wishlist/WishlistCreator';
 import CalendarCreator from './src/screens/Calendar/CalendarCreator';
 import ChatsCreator from './src/screens/Chats/ChatsCreator';
 import ProfileCreator from './src/screens/Profile/ProfileCreator';
+import BusinessCreator from './src/screens/Profile/BusinessCreator';
+import ServicesAndPrices from './src/screens/Profile/Business/ServicesAndPrices';
 
-// User Screens
 import ExploreUser from './src/screens/Explore/ExploreUser';
 import WishlistUser from './src/screens/Wishlist/WishlistUser';
 import CalendarUser from './src/screens/Calendar/CalendarUser';
@@ -101,7 +104,14 @@ export default function App() {
         {!session ? (
           <Stack.Screen name="Login" component={LoginScreen} />
         ) : role === 'creator' ? (
-          <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
+          <Stack.Group>
+            <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
+            <Stack.Screen name="BusinessCreator" component={BusinessCreator} />
+            <Stack.Screen name="ServicesAndPrices" component={ServicesAndPrices} />
+            <Stack.Screen name="WorkLocations" component={WorkLocations} />
+            <Stack.Screen name="Certificates" component={Certificates} />
+            <Stack.Screen name="Bookkeeping" component={Bookkeeping} />
+          </Stack.Group>
         ) : (
           <Stack.Screen name="UserTabs" component={UserTabs} />
         )}
