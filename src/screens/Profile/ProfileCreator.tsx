@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { supabase } from '../../services/supabase';
 
-export default function ProfileScreen({ navigation }: any) {
+export default function ProfileCreator({ navigation }: any) {
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 

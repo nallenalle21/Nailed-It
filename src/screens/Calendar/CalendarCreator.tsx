@@ -40,7 +40,7 @@ const longLabel = (key: string) => {
   return `${Number(d)} ${MONTHS[Number(m) - 1]}`;
 };
 
-export default function CalendarScreen() {
+export default function CalendarCreator() {
   const today = new Date();
   const todayKey = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
   const nowTime = `${pad(today.getHours())}:${pad(today.getMinutes())}`;

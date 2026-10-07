@@ -7,76 +7,103 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from './src/services/supabase';
 
 import LoginScreen from './src/screens/Login/LoginScreen';
-import ExploreScreen from './src/screens/Explore/ExploreScreen';
-import WishlistScreen from './src/screens/Wishlist/WishlistScreen';
-import CalendarScreen from './src/screens/Calendar/CalendarScreen';
-import ProfileScreen from './src/screens/Profile/ProfileScreen';
-import BusinessScreen from './src/screens/Business/BusinessScreen';
+
+// Creator Screens
+import ExploreCreator from './src/screens/Explore/ExploreCreator';
+import WishlistCreator from './src/screens/Wishlist/WishlistCreator';
+import CalendarCreator from './src/screens/Calendar/CalendarCreator';
+import ChatsCreator from './src/screens/Chats/ChatsCreator';
+import ProfileCreator from './src/screens/Profile/ProfileCreator';
+
+// User Screens
+import ExploreUser from './src/screens/Explore/ExploreUser';
+import WishlistUser from './src/screens/Wishlist/WishlistUser';
+import CalendarUser from './src/screens/Calendar/CalendarUser';
+import ChatsUser from './src/screens/Chats/ChatsUser';
+import ProfileUser from './src/screens/Profile/ProfileUser';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-type IconName = keyof typeof Ionicons.glyphMap;
-const icons: Record<string, { active: IconName; inactive: IconName }> = {
-  Explore: { active: 'compass', inactive: 'compass-outline' },
-  Wishlist: { active: 'heart', inactive: 'heart-outline' },
-  Calendar: { active: 'calendar', inactive: 'calendar-outline' },
-  Profile: { active: 'person', inactive: 'person-outline' },
-  Business: { active: 'briefcase', inactive: 'briefcase-outline' },
+const getIcon = (name: string, focused: boolean) => {
+  const icons: any = {
+    Explore: focused ? 'compass' : 'compass-outline',
+    Wishlist: focused ? 'heart' : 'heart-outline',
+    Calendar: focused ? 'calendar' : 'calendar-outline',
+    Chats: focused ? 'chatbubbles' : 'chatbubbles-outline',
+    Profile: focused ? 'person' : 'person-outline',
+  };
+  return icons[name] || 'circle';
 };
 
-function MainTabs() {
+function CreatorTabs() {
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarIcon: ({ focused, color, size }) => {
-          const icon = icons[route.name];
-          return <Ionicons name={focused ? icon.active : icon.inactive} size={size} color={color} />;
-        },
-        tabBarActiveTintColor: 'tomato',
-        tabBarInactiveTintColor: 'gray',
-      })}
-    >
-      <Tab.Screen name="Explore" component={ExploreScreen} />
-      <Tab.Screen name="Wishlist" component={WishlistScreen} />
-      <Tab.Screen name="Calendar" component={CalendarScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
-      <Tab.Screen name="Business" component={BusinessScreen} />
+    <Tab.Navigator screenOptions={({ route }) => ({
+      headerShown: false,
+      tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
+      tabBarActiveTintColor: 'tomato', tabBarInactiveTintColor: 'gray',
+    })}>
+      <Tab.Screen name="Explore" component={ExploreCreator} />
+      <Tab.Screen name="Wishlist" component={WishlistCreator} />
+      <Tab.Screen name="Calendar" component={CalendarCreator} />
+      <Tab.Screen name="Chats" component={ChatsCreator} />
+      <Tab.Screen name="Profile" component={ProfileCreator} />
+    </Tab.Navigator>
+  );
+}
+
+function UserTabs() {
+  return (
+    <Tab.Navigator screenOptions={({ route }) => ({
+      headerShown: false,
+      tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
+      tabBarActiveTintColor: 'tomato', tabBarInactiveTintColor: 'gray',
+    })}>
+      <Tab.Screen name="Explore" component={ExploreUser} />
+      <Tab.Screen name="Wishlist" component={WishlistUser} />
+      <Tab.Screen name="Calendar" component={CalendarUser} />
+      <Tab.Screen name="Chats" component={ChatsUser} />
+      <Tab.Screen name="Profile" component={ProfileUser} />
     </Tab.Navigator>
   );
 }
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
+  const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchRole = async (userId: string) => {
+    const { data } = await supabase.from('profiles').select('role').eq('id', userId).single();
+    setRole(data?.role || 'user');
+    setLoading(false);
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setLoading(false);
+      if (session?.user) fetchRole(session.user.id);
+      else setLoading(false);
     });
 
     supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session?.user) fetchRole(session.user.id);
+      else setRole(null);
     });
   }, []);
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#000" />
-      </View>
-    );
-  }
+  if (loading) return <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator size="large" /></View>;
 
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {session ? (
-          <Stack.Screen name="MainTabs" component={MainTabs} />
-        ) : (
+        {!session ? (
           <Stack.Screen name="Login" component={LoginScreen} />
+        ) : role === 'creator' ? (
+          <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
+        ) : (
+          <Stack.Screen name="UserTabs" component={UserTabs} />
         )}
       </Stack.Navigator>
     </NavigationContainer>
