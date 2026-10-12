@@ -19,7 +19,7 @@ export default function BusinessCreator({ navigation }: any) {
       </View>
 
       <Text style={styles.sectionDescription}>
-        Hantera dina tjänster, priser, certifikat och din bokföring här.
+        Manage your services, prices, certificates, and bookkeeping here.
       </Text>
       
       <View style={styles.menuContainer}>

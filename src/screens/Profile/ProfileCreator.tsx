@@ -25,7 +25,7 @@ export default function ProfileCreator({ navigation }: any) {
   };
 
   const handleUploadImage = () => {
-    Alert.alert("Upload Image", "Öppnar kamerarullen för att byta bild.");
+    Alert.alert("Upload Image", "Opens the camera roll to change the image.");
   };
 
   if (loading) {
