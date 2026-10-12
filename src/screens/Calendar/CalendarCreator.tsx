@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -11,17 +11,26 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../services/supabase';
 
-type Slot = { start: string; end: string; service: string };
+type Slot = { id: string; date: string; start: string; end: string; service: string };
+type BookedSlot = Slot & { customer: string };
+type CreatorSlotRow = {
+  id: string;
+  slot_date: string;
+  start_time: string;
+  end_time: string;
+  service: string;
+  status: 'available' | 'booked';
+  customer_name: string | null;
+};
+
+const SLOT_COLUMNS = 'id, slot_date, start_time, end_time, service, status, customer_name';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
-];
-const DEFAULT_SLOTS: Slot[] = [
-  { start: '13:00', end: '15:00', service: 'Manicure' },
-  { start: '15:00', end: '17:00', service: 'Manicure' },
 ];
 const TIME_REGEX = /^([01]?\d|2[0-3]):[0-5]\d$/;
 
@@ -39,6 +48,38 @@ const longLabel = (key: string) => {
   const [, m, d] = key.split('-');
   return `${Number(d)} ${MONTHS[Number(m) - 1]}`;
 };
+const toCalendarSlot = (row: CreatorSlotRow): Slot | BookedSlot => {
+  const slot: Slot = {
+    id: row.id,
+    date: row.slot_date,
+    start: row.start_time.slice(0, 5),
+    end: row.end_time.slice(0, 5),
+    service: row.service,
+  };
+  return row.status === 'booked'
+    ? { ...slot, customer: row.customer_name ?? '' }
+    : slot;
+};
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '42501'
+  ) {
+    return 'Supabase denied calendar access. Check that this slot belongs to your signed-in account and that its RLS policy is installed.';
+  }
+  if (error instanceof Error) return error.message;
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return error.message;
+  }
+  return fallback;
+};
 
 export default function CalendarCreator() {
   const today = new Date();
@@ -48,42 +89,80 @@ export default function CalendarCreator() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selected, setSelected] = useState(todayKey);
-  // Days that have been changed. Days not in here use DEFAULT_SLOTS.
-  const [slotsByDate, setSlotsByDate] = useState<Record<string, Slot[]>>({});
+  const [creatorId, setCreatorId] = useState<string | null>(null);
+  const [availableSlots, setAvailableSlots] = useState<Slot[]>([]);
+  const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(true);
+  const [slotsLoadError, setSlotsLoadError] = useState('');
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [bookingModalVisible, setBookingModalVisible] = useState(false);
   const [startInput, setStartInput] = useState('');
   const [endInput, setEndInput] = useState('');
   const [serviceInput, setServiceInput] = useState('');
   const [error, setError] = useState('');
+  const [customerInput, setCustomerInput] = useState('');
+  const [bookingError, setBookingError] = useState('');
+  const [slotToBook, setSlotToBook] = useState<Slot | null>(null);
 
-  const getSlots = (key: string): Slot[] =>
-    [...(slotsByDate[key] ?? DEFAULT_SLOTS)].sort((a, b) =>
-      a.start.localeCompare(b.start)
-    );
+  useEffect(() => {
+    let isMounted = true;
 
-  const updateDay = (key: string, fn: (slots: Slot[]) => Slot[]) => {
-    setSlotsByDate((prev) => ({
-      ...prev,
-      [key]: fn(prev[key] ?? DEFAULT_SLOTS),
-    }));
-  };
+    const loadCreatorSlots = async () => {
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        if (!user) throw new Error('No signed-in creator was found.');
 
-  // Find the closest upcoming booking (looks 120 days ahead + any edited days)
-  const findNextUp = (): { key: string; slot: Slot } | null => {
-    const keys = new Set<string>(Object.keys(slotsByDate));
-    for (let i = 0; i < 120; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-      keys.add(dateKey(d.getFullYear(), d.getMonth(), d.getDate()));
-    }
-    const sortedKeys = [...keys].filter((k) => k >= todayKey).sort();
-    for (const key of sortedKeys) {
-      for (const slot of getSlots(key)) {
-        if (key > todayKey || slot.start > nowTime) return { key, slot };
+        const { data, error } = await supabase
+          .from('creator_slots')
+          .select(SLOT_COLUMNS)
+          .eq('creator_id', user.id)
+          .order('slot_date')
+          .order('start_time');
+        if (error) throw error;
+        if (!isMounted) return;
+
+        const rows = (data ?? []) as CreatorSlotRow[];
+        setCreatorId(user.id);
+        setAvailableSlots(
+          rows
+            .filter((row) => row.status === 'available')
+            .map((row) => toCalendarSlot(row) as Slot)
+        );
+        setBookedSlots(
+          rows
+            .filter((row) => row.status === 'booked')
+            .map((row) => toCalendarSlot(row) as BookedSlot)
+        );
+      } catch (error) {
+        if (!isMounted) return;
+        setSlotsLoadError(getErrorMessage(error, 'Could not load the creator calendar.'));
+      } finally {
+        if (isMounted) setSlotsLoading(false);
       }
-    }
-    return null;
-  };
+    };
+
+    void loadCreatorSlots();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const getAvailableSlots = (key: string): Slot[] =>
+    availableSlots
+      .filter((slot) => slot.date === key)
+      .sort((a, b) => a.start.localeCompare(b.start));
+  const getBookedSlots = (key: string): BookedSlot[] =>
+    bookedSlots
+      .filter((slot) => slot.date === key)
+      .sort((a, b) => a.start.localeCompare(b.start));
+
+  // Find the next future appointment; availability alone is not a booking.
+  const findNextUp = (): BookedSlot | null =>
+    bookedSlots
+      .filter((slot) => slot.date > todayKey || (slot.date === todayKey && slot.start > nowTime))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start))[0] ?? null;
   const nextUp = findNextUp();
 
   // Month grid (weeks start on Monday)
@@ -109,12 +188,20 @@ export default function CalendarCreator() {
     setModalVisible(true);
   };
 
-  const saveSlot = () => {
+  const openBookingModal = (slot: Slot) => {
+    setSlotToBook(slot);
+    setCustomerInput('');
+    setBookingError('');
+    setBookingModalVisible(true);
+  };
+
+  const saveSlot = async () => {
     if (!TIME_REGEX.test(startInput) || !TIME_REGEX.test(endInput)) {
       setError('Use the format HH:MM, e.g. 09:00');
       return;
     }
-    const slot: Slot = {
+    const slot: Omit<Slot, 'id'> = {
+      date: selected,
       start: normalize(startInput),
       end: normalize(endInput),
       service: serviceInput.trim() || 'Booking',
@@ -123,33 +210,181 @@ export default function CalendarCreator() {
       setError('End time must be after start time');
       return;
     }
-    if (getSlots(selected).some((s) => s.start === slot.start && s.end === slot.end)) {
+    if (!creatorId) {
+      setError('The creator calendar is not ready. Try again shortly.');
+      return;
+    }
+    const existingSlots = [...getAvailableSlots(selected), ...getBookedSlots(selected)];
+    if (existingSlots.some((s) => s.start === slot.start && s.end === slot.end)) {
       setError('That timeslot already exists');
       return;
     }
-    updateDay(selected, (slots) => [...slots, slot]);
+    const { data, error } = await supabase
+      .from('creator_slots')
+      .insert({
+        creator_id: creatorId,
+        slot_date: slot.date,
+        start_time: slot.start,
+        end_time: slot.end,
+        service: slot.service,
+        status: 'available',
+      })
+      .select(SLOT_COLUMNS)
+      .single();
+    if (error) {
+      setError(getErrorMessage(error, 'Could not save the available slot.'));
+      return;
+    }
+
+    setAvailableSlots((slots) => [...slots, toCalendarSlot(data as CreatorSlotRow) as Slot]);
     setModalVisible(false);
   };
 
-  const confirmRemove = (slot: Slot) => {
+  const saveBooking = async () => {
+    const customer = customerInput.trim();
+    if (!customer) {
+      setBookingError('Enter the customer name');
+      return;
+    }
+    if (!slotToBook) return;
+    if (!creatorId) {
+      setBookingError('The creator calendar is not ready. Try again shortly.');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('creator_slots')
+      .update({ status: 'booked', customer_name: customer })
+      .eq('id', slotToBook.id)
+      .eq('creator_id', creatorId)
+      .eq('status', 'available')
+      .select(SLOT_COLUMNS)
+      .single();
+    if (error) {
+      setBookingError(getErrorMessage(error, 'Could not book this slot.'));
+      return;
+    }
+
+    const bookedSlot = toCalendarSlot(data as CreatorSlotRow) as BookedSlot;
+    setBookedSlots((slots) => [...slots, bookedSlot]);
+    setAvailableSlots((slots) => slots.filter((slot) => slot.id !== bookedSlot.id));
+    setBookingModalVisible(false);
+  };
+
+  const confirmRemoveAvailable = (slot: Slot) => {
     Alert.alert(
-      'Remove booking',
-      `${longLabel(selected)}, ${slot.start}–${slot.end}\n${slot.service}`,
+      'Remove available slot',
+      `${longLabel(slot.date)}, ${slot.start}–${slot.end}\n${slot.service}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: () =>
-            updateDay(selected, (slots) =>
-              slots.filter((s) => !(s.start === slot.start && s.end === slot.end))
-            ),
+          onPress: async () => {
+            if (!creatorId) return;
+            const { error } = await supabase
+              .from('creator_slots')
+              .delete()
+              .eq('id', slot.id)
+              .eq('creator_id', creatorId)
+              .eq('status', 'available');
+            if (error) {
+              Alert.alert(
+                'Could not remove slot',
+                getErrorMessage(error, 'The available slot could not be removed.')
+              );
+              return;
+            }
+            setAvailableSlots((slots) => slots.filter((item) => item.id !== slot.id));
+          },
         },
       ]
     );
   };
 
-  const daySlots = getSlots(selected);
+  const confirmCancelBooking = (slot: BookedSlot) => {
+    Alert.alert(
+      'Cancel appointment',
+      `${longLabel(slot.date)}, ${slot.start}–${slot.end}\n${slot.customer}`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Return to available',
+          onPress: async () => {
+            if (!creatorId) return;
+            const { data, error } = await supabase
+              .from('creator_slots')
+              .update({ status: 'available', customer_name: null })
+              .eq('id', slot.id)
+              .eq('creator_id', creatorId)
+              .eq('status', 'booked')
+              .select(SLOT_COLUMNS)
+              .single();
+            if (error) {
+              Alert.alert(
+                'Could not cancel appointment',
+                getErrorMessage(error, 'The appointment could not be cancelled.')
+              );
+              return;
+            }
+            const availableSlot = toCalendarSlot(data as CreatorSlotRow) as Slot;
+            setBookedSlots((slots) => slots.filter((item) => item.id !== slot.id));
+            setAvailableSlots((slots) => [...slots, availableSlot]);
+          },
+        },
+      ]
+    );
+  };
+
+  const renderSlot = (slot: Slot | BookedSlot) => {
+    const isBooked = 'customer' in slot;
+
+    return (
+      <View key={slot.id} style={styles.slotWrap}>
+        <View style={[styles.slot, isBooked && styles.bookedSlot]}>
+          <Ionicons
+            name="time-outline"
+            size={18}
+            color={isBooked ? '#27834A' : '#555'}
+          />
+          <View>
+            <Text style={styles.slotText}>
+              {slot.start} – {slot.end}
+            </Text>
+            <Text style={styles.slotService}>{slot.service}</Text>
+            {isBooked && <Text style={styles.slotCustomer}>{slot.customer}</Text>}
+          </View>
+        </View>
+        <View style={styles.slotActions}>
+          {!isBooked && (
+            <TouchableOpacity
+              style={[styles.slotAction, styles.bookAction]}
+              onPress={() => openBookingModal(slot)}
+              hitSlop={8}
+              accessibilityLabel="Book this slot"
+            >
+              <Ionicons name="person-add-outline" size={14} color="#fff" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.slotAction, styles.removeAction]}
+            onPress={() =>
+              isBooked
+                ? confirmCancelBooking(slot)
+                : confirmRemoveAvailable(slot)
+            }
+            hitSlop={8}
+            accessibilityLabel={isBooked ? 'Cancel appointment' : 'Remove available slot'}
+          >
+            <Ionicons name="remove" size={16} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const availableForDay = getAvailableSlots(selected);
+  const bookedForDay = getBookedSlots(selected);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -157,19 +392,17 @@ export default function CalendarCreator() {
       <View style={styles.header}>
         <View style={{ width: 28 }} />
         <Text style={styles.title}>Calendar</Text>
-        <TouchableOpacity onPress={openModal} hitSlop={10}>
-          <Ionicons name="add" size={28} color="tomato" />
-        </TouchableOpacity>
+        <View style={{ width: 28 }} />
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Next Up */}
+        {/* Next Booking */}
         <View style={styles.nextUp}>
-          <Text style={styles.nextUpLabel}>Next Up</Text>
+          <Text style={styles.nextUpLabel}>Next Booking</Text>
           <Text style={styles.nextUpText}>
             {nextUp
-              ? `${shortLabel(nextUp.key)} ${nextUp.slot.start}–${nextUp.slot.end}, ${nextUp.slot.service}`
-              : 'No upcoming bookings'}
+              ? `${shortLabel(nextUp.date)} ${nextUp.start}–${nextUp.end}, ${nextUp.service} · ${nextUp.customer}`
+              : 'You have no upcoming booked appointments.'}
           </Text>
         </View>
 
@@ -226,34 +459,33 @@ export default function CalendarCreator() {
           })}
         </View>
 
-        {/* Bookings for selected day */}
+        {/* Available slots for selected day */}
         <View style={styles.slotsHeader}>
-          <Text style={styles.slotsTitle}>Bookings · {longLabel(selected)}</Text>
+          <Text style={styles.slotsTitle}>Available · {longLabel(selected)}</Text>
+          <TouchableOpacity onPress={openModal} hitSlop={10} accessibilityLabel="Add available slot">
+            <Ionicons name="add" size={26} color="tomato" />
+          </TouchableOpacity>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
-          {daySlots.length === 0 && (
-            <Text style={styles.empty}>No bookings this day. Tap + to add one.</Text>
+          {slotsLoadError ? <Text style={styles.error}>{slotsLoadError}</Text> : null}
+          {availableForDay.length === 0 && (
+            <Text style={styles.empty}>
+              {slotsLoading ? 'Loading creator calendar...' : 'No available slots this day.'}
+            </Text>
           )}
-          {daySlots.map((slot) => (
-            <View key={`${slot.start}-${slot.end}`} style={styles.slotWrap}>
-              <View style={styles.slot}>
-                <Ionicons name="time-outline" size={18} color="#555" />
-                <View>
-                  <Text style={styles.slotText}>
-                    {slot.start} – {slot.end}
-                  </Text>
-                  <Text style={styles.slotService}>{slot.service}</Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                style={styles.minus}
-                onPress={() => confirmRemove(slot)}
-                hitSlop={8}
-              >
-                <Ionicons name="remove" size={16} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          ))}
+          {availableForDay.map(renderSlot)}
+        </View>
+
+        <View style={styles.slotsHeader}>
+          <Text style={styles.slotsTitle}>Booked · {longLabel(selected)}</Text>
+        </View>
+        <View style={{ paddingHorizontal: 16 }}>
+          {bookedForDay.length === 0 && (
+            <Text style={styles.empty}>
+              {slotsLoading ? 'Loading creator calendar...' : 'No booked appointments this day.'}
+            </Text>
+          )}
+          {bookedForDay.map(renderSlot)}
         </View>
       </ScrollView>
 
@@ -266,7 +498,7 @@ export default function CalendarCreator() {
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>New booking · {longLabel(selected)}</Text>
+            <Text style={styles.modalTitle}>Add availability · {longLabel(selected)}</Text>
             <TextInput
               style={styles.input}
               placeholder="Start (e.g. 09:00)"
@@ -296,6 +528,40 @@ export default function CalendarCreator() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.saveButton} onPress={saveSlot}>
                 <Text style={styles.saveText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={bookingModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBookingModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Book appointment</Text>
+            {slotToBook && (
+              <Text style={styles.bookingDetails}>
+                {longLabel(slotToBook.date)} · {slotToBook.start}–{slotToBook.end} · {slotToBook.service}
+              </Text>
+            )}
+            <TextInput
+              style={styles.input}
+              placeholder="Customer name"
+              value={customerInput}
+              onChangeText={setCustomerInput}
+              autoCapitalize="words"
+            />
+            {bookingError ? <Text style={styles.error}>{bookingError}</Text> : null}
+            <View style={styles.modalButtons}>
+              <TouchableOpacity onPress={() => setBookingModalVisible(false)}>
+                <Text style={styles.cancel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveButton} onPress={saveBooking}>
+                <Text style={styles.saveText}>Book</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -369,6 +635,9 @@ const styles = StyleSheet.create({
   todayText: { color: 'tomato', fontWeight: '700' },
   selectedText: { color: '#fff', fontWeight: '700' },
   slotsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
@@ -378,29 +647,37 @@ const styles = StyleSheet.create({
   },
   slotsTitle: { fontSize: 16, fontWeight: '600' },
   empty: { color: '#888', paddingVertical: 8 },
+  bookingDetails: { color: '#666', marginBottom: 12 },
   slotWrap: { marginBottom: 10, paddingTop: 8 },
   slot: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 14,
-    paddingRight: 28,
+    paddingRight: 52,
     borderRadius: 10,
     backgroundColor: '#f4f4f4',
   },
+  bookedSlot: { backgroundColor: '#eaf6ee' },
   slotText: { fontSize: 16, fontWeight: '600' },
   slotService: { fontSize: 14, color: '#666', marginTop: 2 },
-  minus: {
+  slotCustomer: { fontSize: 13, color: '#27834A', fontWeight: '600', marginTop: 4 },
+  slotActions: {
     position: 'absolute',
     top: 0,
     right: -6,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  slotAction: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'crimson',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  bookAction: { backgroundColor: '#27834A' },
+  removeAction: { backgroundColor: 'crimson' },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
