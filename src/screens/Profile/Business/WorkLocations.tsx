@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '/Users/lovajawostrom/Desktop/prog/Nailedit/Nailed-It/src/services/supabase'; // Adjust path if needed
+import { supabase } from '../../../services/supabase'; // Adjust path if needed
 
 export default function WorkLocations({ navigation }: any) {
   const [loading, setLoading] = useState(true);

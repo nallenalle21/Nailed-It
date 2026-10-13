@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Mod
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 // Adjust the path below if your supabase.ts is located elsewhere:
-import { supabase } from '/Users/lovajawostrom/Desktop/prog/Nailedit/Nailed-It/src/services/supabase';
+import { supabase } from '../../../services/supabase';
 
 type Certificate = {
   id: string;

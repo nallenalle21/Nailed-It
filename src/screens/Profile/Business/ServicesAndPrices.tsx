@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '/Users/lovajawostrom/Desktop/prog/Nailedit/Nailed-It/src/services/supabase'; // Adjust path if needed
+import { supabase } from '../../../services/supabase'; // Adjust path if needed
 
 type Service = {
   id: string;

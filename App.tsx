@@ -20,6 +20,8 @@ import BusinessCreator from './src/screens/Profile/BusinessCreator';
 import ServicesAndPrices from './src/screens/Profile/Business/ServicesAndPrices';
 
 import ExploreUser from './src/screens/Explore/ExploreUser';
+import VendorDirectory from './src/screens/Explore/VendorDirectory';
+import VendorProfile from './src/screens/Explore/VendorProfile';
 import WishlistUser from './src/screens/Wishlist/WishlistUser';
 import CalendarUser from './src/screens/Calendar/CalendarUser';
 import ChatsUser from './src/screens/Chats/ChatsUser';
@@ -35,9 +37,21 @@ const getIcon = (name: string, focused: boolean) => {
     Calendar: focused ? 'calendar' : 'calendar-outline',
     Chats: focused ? 'chatbubbles' : 'chatbubbles-outline',
     Profile: focused ? 'person' : 'person-outline',
+    Vendors: focused ? 'people' : 'people-outline',
   };
   return icons[name] || 'circle';
 };
+
+// Nest the public vendor profile inside the Vendors tab so the bottom tabs
+// stay mounted (and visible) while browsing a creator's profile.
+function VendorsStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="VendorDirectory" component={VendorDirectory} />
+      <Stack.Screen name="VendorProfile" component={VendorProfile} />
+    </Stack.Navigator>
+  );
+}
 
 function CreatorTabs() {
   return (
@@ -47,6 +61,7 @@ function CreatorTabs() {
       tabBarActiveTintColor: 'tomato', tabBarInactiveTintColor: 'gray',
     })}>
       <Tab.Screen name="Explore" component={ExploreCreator} />
+      <Tab.Screen name="Vendors" component={VendorsStack} />
       <Tab.Screen name="Wishlist" component={WishlistCreator} />
       <Tab.Screen name="Calendar" component={CalendarCreator} />
       <Tab.Screen name="Chats" component={ChatsCreator} />
@@ -63,6 +78,7 @@ function UserTabs() {
       tabBarActiveTintColor: 'tomato', tabBarInactiveTintColor: 'gray',
     })}>
       <Tab.Screen name="Explore" component={ExploreUser} />
+      <Tab.Screen name="Vendors" component={VendorsStack} />
       <Tab.Screen name="Wishlist" component={WishlistUser} />
       <Tab.Screen name="Calendar" component={CalendarUser} />
       <Tab.Screen name="Chats" component={ChatsUser} />
@@ -113,7 +129,9 @@ export default function App() {
             <Stack.Screen name="Bookkeeping" component={Bookkeeping} />
           </Stack.Group>
         ) : (
-          <Stack.Screen name="UserTabs" component={UserTabs} />
+          <Stack.Group>
+            <Stack.Screen name="UserTabs" component={UserTabs} />
+          </Stack.Group>
         )}
       </Stack.Navigator>
     </NavigationContainer>
