@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../services/supabase';
 import { listVendorPosts, uploadVendorPost, setVendorPostPinned, deleteVendorPost, publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
+import { getVendorAvatarUrl, uploadVendorAvatar } from '../../services/vendorAvatar';
 
 // Portfolio photos are stored in Supabase Storage and indexed by vendor_posts.
 type PortfolioPhoto = VendorPost & { uri: string; pinned: boolean };
@@ -33,6 +34,7 @@ export default function ProfileCreator({ navigation }: any) {
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [photos, setPhotos] = useState<PortfolioPhoto[]>([]);
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
@@ -56,6 +58,13 @@ export default function ProfileCreator({ navigation }: any) {
         if (profileError) throw profileError;
 
         if (active) setProfile(profileData);
+        try {
+          const url = await getVendorAvatarUrl(authData.user.id);
+          if (active) setProfilePhotoUri(url);
+        } catch (avatarError) {
+          console.error('[ProfileCreator] Could not load avatar:', avatarError);
+          if (active) Alert.alert('Profile picture unavailable', String(avatarError));
+        }
         try {
           const posts = await listVendorPosts(authData.user.id);
           if (active) setPhotos(posts.map(toPhoto));
@@ -102,8 +111,13 @@ export default function ProfileCreator({ navigation }: any) {
     return true;
   };
 
-  // Preview-only profile picture. This is not saved to Supabase yet.
+  // Uploaded to Supabase and visible on this creator's public VendorProfile.
   const handleUploadImage = async () => {
+    if (avatarBusy) return;
+    if (!profile?.id || profile?.role !== 'creator') {
+      Alert.alert('Creator account required', 'Sign in as a creator to change your picture.');
+      return;
+    }
     try {
       if (!(await requestPhotoAccess())) return;
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -112,11 +126,15 @@ export default function ProfileCreator({ navigation }: any) {
         aspect: [1, 1],
         quality: 0.8,
       });
-      if (!result.canceled && result.assets.length > 0) {
-        setProfilePhotoUri(result.assets[0].uri);
-      }
-    } catch (error) {
-      Alert.alert('Could not select photo', String(error));
+      if (result.canceled || result.assets.length === 0) return;
+      setAvatarBusy(true);
+      const url = await uploadVendorAvatar(profile.id, result.assets[0]);
+      setProfilePhotoUri(url); // Only update once the upload succeeds.
+    } catch (caughtError) {
+      console.error('[ProfileCreator] Avatar upload failed:', caughtError);
+      Alert.alert('Could not upload profile picture', String(caughtError));
+    } finally {
+      setAvatarBusy(false);
     }
   };
 
@@ -233,9 +251,10 @@ export default function ProfileCreator({ navigation }: any) {
             <TouchableOpacity
               style={styles.cameraIcon}
               onPress={handleUploadImage}
-              accessibilityLabel="Choose profile picture"
+              disabled={avatarBusy}
+              accessibilityLabel="Upload public profile picture"
             >
-              <Ionicons name="camera" size={20} color="#fff" />
+              {avatarBusy ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="camera" size={20} color="#fff" />}
             </TouchableOpacity>
           </View>
           <Text style={styles.name}>{displayName}</Text>

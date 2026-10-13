@@ -1,195 +1,245 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+/**
+ * Creator-only management of services offered by the signed-in vendor.
+ * Depends on supabase/02_prepare_services.sql (duration_minutes and category columns).
+ */
+import React, { useCallback, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../../services/supabase'; // Adjust path if needed
+import { supabase } from '../../../services/supabase';
 
 type Service = {
   id: string;
+  user_id: string;
   name: string;
-  price: number;
-  discount_price: number | null;
+  category: string;
+  duration_minutes: number;
+  price: number | string;
+  discount_price: number | string | null;
 };
 
+const formatPrice = (amount: number | string) => `${Number(amount).toLocaleString('sv-SE')} kr`;
+
 export default function ServicesAndPrices({ navigation }: any) {
+  const [userId, setUserId] = useState<string | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const [saving, setSaving] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newCategory, setNewCategory] = useState('');
+  const [newDuration, setNewDuration] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newDiscount, setNewDiscount] = useState('');
 
-  // 1. Fetch services from Supabase when screen loads
-  useEffect(() => {
-    fetchServices();
-  }, []);
-
-  const fetchServices = async () => {
+  // Reload when the Business screen is opened again.
+  useFocusEffect(useCallback(() => {
+    let active = true;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('services')
-      .select('*')
-      .order('created_at', { ascending: false });
+    setServices([]);
+    setUserId(null);
 
-    if (error) {
-      Alert.alert("Error fetching services", error.message);
-    } else if (data) {
-      setServices(data);
-    }
-    setLoading(false);
-  };
+    const load = async () => {
+      try {
+        const { data: auth, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        const uid = auth.user?.id;
+        if (!uid) throw new Error('Please sign in again.');
 
-  // 2. Add a new service to Supabase
+        const { data: vendor, error: vendorError } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', uid)
+          .single();
+        if (vendorError) throw vendorError;
+        if (vendor?.role !== 'creator') throw new Error('Only vendors can manage services.');
+
+        const { data, error } = await supabase
+          .from('services')
+          .select('id, user_id, name, category, duration_minutes, price, discount_price')
+          .eq('user_id', uid)
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        if (!active) return;
+        setUserId(uid);
+        setServices((data ?? []) as Service[]);
+      } catch (caughtError) {
+        if (active) Alert.alert('Could not load services', String(caughtError));
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => { active = false; };
+  }, []));
+
   const handleAddService = async () => {
-    if (!newName.trim() || !newPrice.trim()) {
-      Alert.alert("Missing info", "Please enter both a service name and a regular price.");
+    if (!userId || saving) return;
+
+    const name = newName.trim();
+    const category = newCategory.trim();
+    const durationMinutes = Number(newDuration.trim());
+    const price = Number(newPrice.trim().replace(',', '.'));
+    const discountPrice = newDiscount.trim()
+      ? Number(newDiscount.trim().replace(',', '.'))
+      : null;
+
+    if (!name || !category || !newDuration.trim() || !newPrice.trim()) {
+      Alert.alert('Missing information', 'Enter a service name, category, duration and price.');
+      return;
+    }
+    if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) {
+      Alert.alert('Invalid duration', 'Enter a duration in whole minutes, such as 60 or 90.');
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0 ||
+        (discountPrice !== null && (!Number.isFinite(discountPrice) || discountPrice < 0 || discountPrice > price))) {
+      Alert.alert('Invalid price', 'Enter valid prices. A discount must not exceed the regular price.');
       return;
     }
 
-    const priceNum = parseFloat(newPrice);
-    const discountNum = newDiscount.trim() ? parseFloat(newDiscount) : null;
+    setSaving(true);
+    try {
+      // Confirm session identity at the moment of writing, not only on screen load.
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      if (!auth.user || auth.user.id !== userId) throw new Error('Session changed. Please reopen this screen.');
 
-    if (isNaN(priceNum) || (discountNum !== null && isNaN(discountNum))) {
-      Alert.alert("Invalid price", "Please enter valid numbers for the price fields.");
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from('services')
-      .insert([
-        {
-          name: newName.trim(),
-          price: priceNum,
-          discount_price: discountNum,
-        }
-      ])
-      .select();
-
-    if (error) {
-      Alert.alert("Could not save service", error.message);
-      return;
-    }
-
-    if (data) {
-      setServices([data[0], ...services]);
+      const { data, error } = await supabase
+        .from('services')
+        .insert({
+          user_id: auth.user.id,
+          name,
+          category,
+          duration_minutes: durationMinutes,
+          price,
+          discount_price: discountPrice,
+        })
+        .select('id, user_id, name, category, duration_minutes, price, discount_price')
+        .single();
+      if (error) throw error;
+      setServices(previous => [data as Service, ...previous]);
       setNewName('');
+      setNewCategory('');
+      setNewDuration('');
       setNewPrice('');
       setNewDiscount('');
+    } catch (caughtError) {
+      Alert.alert('Could not save service', String(caughtError));
+    } finally {
+      setSaving(false);
     }
   };
 
-  // 3. Delete a service from Supabase
-  const handleDelete = (id: string, name: string) => {
-    Alert.alert("Delete Service", `Are you sure you want to remove "${name}"?`, [
-      { text: "Cancel", style: "cancel" },
+  const handleDelete = (service: Service) => {
+    if (!userId) return;
+    Alert.alert('Delete service?', `Remove "${service.name}" from your services?`, [
+      { text: 'Cancel', style: 'cancel' },
       {
-        text: "Delete",
-        style: "destructive",
+        text: 'Delete',
+        style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase
-            .from('services')
-            .delete()
-            .eq('id', id);
-
-          if (error) {
-            Alert.alert("Error deleting", error.message);
-          } else {
-            setServices(services.filter(s => s.id !== id));
+          try {
+            const { data: auth, error: authError } = await supabase.auth.getUser();
+            if (authError) throw authError;
+            if (!auth.user || auth.user.id !== userId) throw new Error('Session changed. Reopen this screen.');
+            const { data, error } = await supabase
+              .from('services')
+              .delete()
+              .eq('id', service.id)
+              .eq('user_id', auth.user.id)
+              .select('id');
+            if (error) throw error;
+            if (!data?.length) throw new Error('Service not found or you do not have permission to delete it.');
+            setServices(previous => previous.filter(item => item.id !== service.id));
+          } catch (caughtError) {
+            Alert.alert('Could not delete service', String(caughtError));
           }
-        }
-      }
+        },
+      },
     ]);
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} accessibilityLabel="Go back">
           <Ionicons name="arrow-back" size={24} color="#191919" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Services & Prices</Text>
         <View style={{ width: 24 }} />
       </View>
-
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <Text style={styles.sectionDescription}>
-          Add the treatments you offer, set your regular prices, and add optional discounted prices for campaigns.
+          Add services that customers can see on your public vendor profile. Each service belongs to your account only.
         </Text>
-
-        {/* Form to add a new service */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Add New Service</Text>
-
           <Text style={styles.label}>Service Name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Gel Nails - New Set"
-            value={newName}
-            onChangeText={setNewName}
-            placeholderTextColor="#716C83"
-          />
-
+          <TextInput style={styles.input} placeholder="e.g. Advanced nail art"
+            value={newName} onChangeText={setNewName} placeholderTextColor="#716C83" />
+          <Text style={styles.label}>Service Category</Text>
+          <TextInput style={styles.input} placeholder="e.g. Nails, Hair, Makeup"
+            value={newCategory} onChangeText={setNewCategory} placeholderTextColor="#716C83" />
+          <Text style={styles.label}>Duration (minutes)</Text>
+          <TextInput style={styles.input} placeholder="e.g. 90" keyboardType="number-pad"
+            value={newDuration} onChangeText={setNewDuration} placeholderTextColor="#716C83" />
           <View style={styles.row}>
-            <View style={{ flex: 1, marginRight: 10 }}>
+            <View style={styles.priceColumn}>
               <Text style={styles.label}>Regular Price (SEK)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 650"
-                keyboardType="numeric"
-                value={newPrice}
-                onChangeText={setNewPrice}
-                placeholderTextColor="#716C83"
-              />
+              <TextInput style={styles.input} placeholder="e.g. 650" keyboardType="decimal-pad"
+                value={newPrice} onChangeText={setNewPrice} placeholderTextColor="#716C83" />
             </View>
-
-            <View style={{ flex: 1 }}>
+            <View style={styles.priceColumn}>
               <Text style={styles.label}>Discount Price (Optional)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 500"
-                keyboardType="numeric"
-                value={newDiscount}
-                onChangeText={setNewDiscount}
-                placeholderTextColor="#716C83"
-              />
+              <TextInput style={styles.input} placeholder="e.g. 500" keyboardType="decimal-pad"
+                value={newDiscount} onChangeText={setNewDiscount} placeholderTextColor="#716C83" />
             </View>
           </View>
-
-          <TouchableOpacity style={styles.addBtn} onPress={handleAddService}>
+          <TouchableOpacity
+            style={[styles.addBtn, (saving || loading || !userId) && styles.disabled]}
+            onPress={handleAddService} disabled={saving || loading || !userId}>
             <Ionicons name="add-circle-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-            <Text style={styles.addBtnText}>Add Service</Text>
+            <Text style={styles.addBtnText}>{saving ? 'Saving…' : 'Add Service'}</Text>
           </TouchableOpacity>
         </View>
-
         <Text style={styles.sectionTitle}>Your Offered Services</Text>
-
         {loading ? (
           <ActivityIndicator size="large" color="#1D3979" style={{ marginTop: 20 }} />
         ) : services.length === 0 ? (
           <Text style={styles.emptyText}>No services added yet.</Text>
         ) : (
-          services.map((service) => (
+          services.map(service => (
             <View key={service.id} style={styles.serviceItem}>
               <View style={styles.serviceInfo}>
                 <Text style={styles.serviceName}>{service.name}</Text>
+                <Text style={styles.serviceMeta}>{service.category} · {service.duration_minutes} min</Text>
                 <View style={styles.priceRow}>
-                  {service.discount_price ? (
+                  {service.discount_price !== null ? (
                     <>
-                      <Text style={styles.oldPrice}>{service.price} kr</Text>
-                      <Text style={styles.discountPrice}>{service.discount_price} kr</Text>
+                      <Text style={styles.oldPrice}>{formatPrice(service.price)}</Text>
+                      <Text style={styles.discountPrice}>{formatPrice(service.discount_price)}</Text>
                     </>
                   ) : (
-                    <Text style={styles.regularPrice}>{service.price} kr</Text>
+                    <Text style={styles.regularPrice}>{formatPrice(service.price)}</Text>
                   )}
                 </View>
               </View>
-              <TouchableOpacity onPress={() => handleDelete(service.id, service.name)} style={styles.deleteBtn}>
+              <TouchableOpacity onPress={() => handleDelete(service)} style={styles.deleteBtn} accessibilityLabel={`Delete ${service.name}`}>
                 <Ionicons name="trash-outline" size={20} color="#BF0F46" />
               </TouchableOpacity>
             </View>
           ))
         )}
-
-        <View style={{ height: 50 }} />
       </ScrollView>
     </View>
   );
@@ -200,23 +250,26 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 60, marginBottom: 10, paddingHorizontal: 20 },
   backBtn: { padding: 5 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#191919' },
-  content: { paddingHorizontal: 20 },
+  content: { paddingHorizontal: 20, paddingBottom: 50 },
   sectionDescription: { fontSize: 14, color: '#716C83', marginBottom: 20 },
   card: { backgroundColor: '#fff', padding: 20, borderRadius: 16, marginBottom: 30, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919', marginBottom: 15 },
-  label: { fontSize: 13, fontWeight: '600', color: '#191919', marginBottom: 6 },
+  label: { fontSize: 13, color: '#191919', fontWeight: '600', marginBottom: 6 },
   input: { backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, padding: 12, fontSize: 15, color: '#191919', marginBottom: 15 },
-  row: { flexDirection: 'row', justifyContent: 'space-between' },
+  row: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  priceColumn: { flex: 1 },
   addBtn: { backgroundColor: '#1D3979', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 15, borderRadius: 12, marginTop: 5 },
+  disabled: { opacity: 0.5 },
   addBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919', marginBottom: 15 },
   emptyText: { fontSize: 14, color: '#716C83', fontStyle: 'italic', marginTop: 10 },
   serviceItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
   serviceInfo: { flex: 1 },
   serviceName: { fontSize: 16, fontWeight: 'bold', color: '#191919', marginBottom: 4 },
+  serviceMeta: { fontSize: 12, color: '#716C83', marginBottom: 6 },
   priceRow: { flexDirection: 'row', alignItems: 'center' },
   regularPrice: { fontSize: 14, color: '#1D3979', fontWeight: 'bold' },
   oldPrice: { fontSize: 14, color: '#716C83', textDecorationLine: 'line-through', marginRight: 8 },
   discountPrice: { fontSize: 14, color: '#BF0F46', fontWeight: 'bold' },
-  deleteBtn: { padding: 8 }
+  deleteBtn: { padding: 8 },
 });

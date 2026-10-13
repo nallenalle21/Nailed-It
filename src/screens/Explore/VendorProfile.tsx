@@ -22,11 +22,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
+import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 
 type Vendor = { id: string; username: string | null; role: string };
 type Service = {
   id: string;
   name: string;
+  category: string;
+  duration_minutes: number;
   price: number | string;
   discount_price: number | string | null;
 };
@@ -68,6 +71,8 @@ function money(amount: number | string): string {
 export default function VendorProfile({ navigation, route }: any) {
   const vendorId: string | undefined = route?.params?.vendorId;
   const [vendor, setVendor] = useState<Vendor | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [posts, setPosts] = useState<VendorPost[]>([]);
@@ -81,6 +86,8 @@ export default function VendorProfile({ navigation, route }: any) {
   useFocusEffect(useCallback(() => {
     let current = true;
     setVendor(null);
+    setAvatarUrl(null);
+    setAvatarLoadFailed(false);
     setServices([]);
     setCertificates([]);
     setPosts([]);
@@ -96,14 +103,14 @@ export default function VendorProfile({ navigation, route }: any) {
 
     const load = async () => {
       try {
-        const [profileResult, servicesResult, certificatesResult, postsResult] = await Promise.all([
+        const [profileResult, servicesResult, certificatesResult, postsResult, avatarResult] = await Promise.all([
           supabase.from('profiles')
             .select('id, username, role')
             .eq('id', vendorId)
             .eq('role', 'creator')
             .maybeSingle(),
           supabase.from('services')
-            .select('id, name, price, discount_price')
+            .select('id, name, category, duration_minutes, price, discount_price')
             .eq('user_id', vendorId)
             .order('name', { ascending: true }),
           supabase.from('certificates')
@@ -116,6 +123,9 @@ export default function VendorProfile({ navigation, route }: any) {
             .order('is_pinned', { ascending: false })
             .order('created_at', { ascending: false })
             .limit(9),
+          getVendorAvatarUrl(vendorId)
+            .then(url => ({ url, error: null as string | null }))
+            .catch(caughtError => ({ url: null, error: String(caughtError) })),
         ]);
         if (!current) return;
         const failures: string[] = [];
@@ -123,6 +133,8 @@ export default function VendorProfile({ navigation, route }: any) {
         if (servicesResult.error) failures.push(`Services: ${servicesResult.error.message}`);
         if (certificatesResult.error) failures.push(`Certificates: ${certificatesResult.error.message}`);
         if (postsResult.error) failures.push(`Portfolio: ${postsResult.error.message}`);
+        if (avatarResult.error) failures.push(`Avatar: ${avatarResult.error}`);
+        setAvatarUrl(avatarResult.url);
         setVendor((profileResult.data as Vendor | null) ?? null);
         setServices((servicesResult.data ?? []) as Service[]);
         setCertificates((certificatesResult.data ?? []) as Certificate[]);
@@ -205,7 +217,19 @@ export default function VendorProfile({ navigation, route }: any) {
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
           <View style={styles.hero}>
             <View style={styles.profileAvatar}>
-              <Text style={styles.profileInitial}>{initial}</Text>
+              {avatarUrl && !avatarLoadFailed ? (
+                <Image
+                  source={{ uri: avatarUrl }}
+                  style={styles.avatarPhoto}
+                  resizeMode="cover"
+                  onError={(event) => {
+                    console.warn('[VendorProfile] Avatar image failed to load:', event.nativeEvent.error);
+                    setAvatarLoadFailed(true);
+                  }}
+                />
+              ) : (
+                <Text style={styles.profileInitial}>{initial}</Text>
+              )}
             </View>
             <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.creatorLabel}>Creative professional · Nailed-It</Text>
@@ -296,7 +320,7 @@ export default function VendorProfile({ navigation, route }: any) {
                 <View key={service.id} style={styles.serviceRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.serviceName}>{service.name}</Text>
-                    <Text style={styles.serviceMeta}>Duration and category to be added</Text>
+                    <Text style={styles.serviceMeta}>{service.category} · {service.duration_minutes} min</Text>
                   </View>
                   <View style={styles.servicePrices}>
                     {discounted && <Text style={styles.oldPrice}>{money(service.price)}</Text>}
@@ -389,6 +413,7 @@ const styles = StyleSheet.create({
   body: { paddingBottom: 50 },
   hero: { paddingTop: 34, paddingHorizontal: 24, alignItems: 'center', paddingBottom: 28 },
   profileAvatar: { width: 94, height: 94, borderRadius: 47, backgroundColor: '#E5CCD6', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  avatarPhoto: { width: '100%', height: '100%', borderRadius: 47 },
   profileInitial: { fontWeight: '700', fontSize: 41, color: theme.accent },
   name: { color: theme.ink, fontWeight: '800', fontSize: 28 },
   creatorLabel: { fontSize: 13, color: theme.muted, marginTop: 7 },
