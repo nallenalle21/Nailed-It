@@ -1,1 +1,2 @@
-import { View, Text } from 'react-native'; export default function ChatsCreator() { return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Chat Creator Page</Text></View>; }
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
+import { View } from 'react-native'; export default function ChatsCreator() { return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Chat Creator Page</Text></View>; }

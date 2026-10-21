@@ -1,7 +1,8 @@
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
+import { colors } from '../../theme';
 import { useState, useMemo } from 'react';
 import {
   View,
-  Text,
   TextInput,
   TouchableOpacity,
   ScrollView,
@@ -42,12 +43,12 @@ type Tech = {
 
 // Placeholder data, replace with real data later
 const TECHS: Tech[] = [
-  { id: '1', name: 'Nail Studio Sofia', area: 'Södermalm', lat: 59.3138, lng: 18.0710, services: ['Gel nails', 'Manicure'], price: 450 },
-  { id: '2', name: 'Alina Nails', area: 'Vasastan', lat: 59.3425, lng: 18.0490, services: ['Advanced nail art', 'Gel nails'], price: 750 },
-  { id: '3', name: 'Glow by Maja', area: 'Östermalm', lat: 59.3380, lng: 18.0890, services: ['Simple nail art', 'Manicure', 'Pedicure'], price: 400 },
-  { id: '4', name: 'Studio Kitty', area: 'Kungsholmen', lat: 59.3330, lng: 18.0270, services: ['Acrylic nails', 'Advanced nail art'], price: 900 },
-  { id: '5', name: 'Polish & Co', area: 'Gamla stan', lat: 59.3250, lng: 18.0710, services: ['Manicure', 'Pedicure', 'Gel nails'], price: 550 },
-  { id: '6', name: 'Nails by Elin', area: 'Hornstull', lat: 59.3160, lng: 18.0340, services: ['Simple nail art', 'Gel nails'], price: 480 },
+  { id: '1', name: 'Nail Studio Kalle', area: 'Södermalm', lat: 59.3138, lng: 18.0710, services: ['Gel nails', 'Manicure'], price: 450 },
+  { id: '2', name: 'Lova Nails', area: 'Vasastan', lat: 59.3425, lng: 18.0490, services: ['Advanced nail art', 'Gel nails'], price: 750 },
+  { id: '3', name: 'Glow by Ines', area: 'Östermalm', lat: 59.3380, lng: 18.0890, services: ['Simple nail art', 'Manicure', 'Pedicure'], price: 400 },
+  { id: '4', name: 'Studio Leif', area: 'Kungsholmen', lat: 59.3330, lng: 18.0270, services: ['Acrylic nails', 'Advanced nail art'], price: 900 },
+  { id: '5', name: 'Aly & co', area: 'Gamla stan', lat: 59.3250, lng: 18.0710, services: ['Manicure', 'Pedicure', 'Gel nails'], price: 550 },
+  { id: '6', name: 'I <3 Nails', area: 'Hornstull', lat: 59.3160, lng: 18.0340, services: ['Simple nail art', 'Gel nails'], price: 480 },
 ];
 
 const STOCKHOLM = {
@@ -59,7 +60,7 @@ const STOCKHOLM = {
 
 // Placeholder inspo tiles: different heights + pastel colors
 const INSPO = [
-  { id: 'a', h: 180, c: '#fde2e4' },
+  { id: 'a', h: 180, c: '#d5f6e8ff' },
   { id: 'b', h: 240, c: '#e2ece9' },
   { id: 'c', h: 150, c: '#dfe7fd' },
   { id: 'd', h: 220, c: '#fff1e6' },
@@ -139,7 +140,7 @@ export default function ExploreUser() {
                 }}
               >
                 <Text style={[styles.optionText, active && styles.optionActive]}>{opt}</Text>
-                {active && <Ionicons name="checkmark" size={20} color="tomato" />}
+                {active && <Ionicons name="checkmark" size={20} color={colors.primary} />}
               </TouchableOpacity>
             );
           })}
@@ -167,7 +168,7 @@ export default function ExploreUser() {
           <Ionicons name="search" size={18} color="#888" />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search nail techs, areas, styles"
+            placeholder="search nail techs, areas, styles"
             value={query}
             onChangeText={setQuery}
             returnKeyType="search"
@@ -222,7 +223,7 @@ export default function ExploreUser() {
                 coordinate={{ latitude: t.lat, longitude: t.lng }}
                 title={t.name}
                 description={`${t.area} · from ${t.price} kr`}
-                pinColor="tomato"
+                pinColor={colors.primary}
               />
             ))}
           </MapView>
@@ -230,7 +231,7 @@ export default function ExploreUser() {
 
         {/* PART 3: inspo feed */}
         <Text style={[styles.sectionTitle, { marginHorizontal: 16, marginTop: 24 }]}>
-          Inspiration
+          get inspired
         </Text>
         <View style={styles.feed}>
           <View style={styles.feedCol}>
@@ -268,7 +269,7 @@ export default function ExploreUser() {
                 }}
               >
                 <Text style={[styles.optionText, priceIdx === i && styles.optionActive]}>{r.label}</Text>
-                {priceIdx === i && <Ionicons name="checkmark" size={20} color="tomato" />}
+                {priceIdx === i && <Ionicons name="checkmark" size={20} color={colors.danger} />}
               </TouchableOpacity>
             ))}
           </View>
@@ -286,7 +287,7 @@ export default function ExploreUser() {
                 mode="date"
                 display="inline"
                 minimumDate={new Date()}
-                accentColor="tomato"
+                accentColor={colors.danger}
                 onChange={(_, d) => d && setDate(d)}
               />
               <View style={styles.dateButtons}>
@@ -377,10 +378,10 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     backgroundColor: '#fff',
   },
-  pillActive: { backgroundColor: 'tomato', borderColor: 'tomato' },
+  pillActive: { backgroundColor: colors.primary, borderColor:colors.primary },
   pillText: { fontSize: 14, color: '#333', fontWeight: '500' },
   clear: { paddingHorizontal: 8 },
-  clearText: { color: 'tomato', fontWeight: '600' },
+  clearText: { color: colors.primary, fontWeight: '600' },
   mapHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -414,7 +415,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#ddd',
   },
   optionText: { fontSize: 16 },
-  optionActive: { color: 'tomato', fontWeight: '600' },
+  optionActive: { color:colors.primary, fontWeight: '600' },
   dateButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -423,6 +424,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   cancel: { fontSize: 16, color: '#666' },
-  doneButton: { backgroundColor: 'tomato', paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
+  doneButton: { backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
   doneText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

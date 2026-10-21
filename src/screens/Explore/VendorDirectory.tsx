@@ -2,12 +2,12 @@
  * Temporary vendor picker for development.
  * Replace the tab entry with navigation from Explore / Saved posts later.
  */
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from 'react-native';

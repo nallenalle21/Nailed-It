@@ -5,6 +5,7 @@
  * IMPORTANT: The current certificates table has no verification status.
  * Never label submitted certificates as verified until backend approval exists.
  */
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,7 +14,6 @@ import {
   Modal,
   ScrollView,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from 'react-native';

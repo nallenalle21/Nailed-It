@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { colors } from '../../theme';
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import {
   View,
-  Text,
   Image,
   StyleSheet,
   ScrollView,
@@ -263,11 +264,11 @@ export default function ProfileCreator({ navigation }: any) {
 
         <View style={styles.statsContainer}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>0</Text>
+            <Text style={styles.statNumber}> 3 </Text>
             <Text style={styles.statLabel}>Bookings</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>0.0 ⭐️</Text>
+            <Text style={styles.statNumber}> 5.0 </Text>
             <Text style={styles.statLabel}>Rating</Text>
           </View>
         </View>
@@ -377,27 +378,27 @@ Uploaded photos and pins are saved in Supabase and visible on your public creato
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9f9f9' },
+  container: { flex: 1, backgroundColor: colors.primarySoft },
   content: { paddingHorizontal: 20, paddingBottom: 32 },
-  header: { alignItems: 'center', marginTop: 40 },
+  header: { alignItems: 'center', marginTop: 100 },
   imageWrapper: { position: 'relative', marginBottom: 15 },
   profilePic: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#e0e0e0' },
   profilePicPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  profileInitial: { fontSize: 46, fontWeight: '700', color: '#1D3979' },
-  cameraIcon: { position: 'absolute', bottom: 0, right: 5, backgroundColor: '#191919', padding: 8, borderRadius: 20, borderWidth: 3, borderColor: '#f9f9f9' },
-  name: { fontSize: 24, fontWeight: '900', color: '#191919' },
+  profileInitial: { fontSize: 46, fontWeight: '700', color: colors.danger },
+  cameraIcon: { position: 'absolute', bottom: 0, right: 5, backgroundColor: colors.text, padding: 8, borderRadius: 20, borderWidth: 3, borderColor: '#f9f9f9' },
+  name: { fontSize: 24, fontWeight: '900', color: colors.text },
   subtitle: { fontSize: 14, color: '#716C83', marginTop: 5 },
   statsContainer: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 30, paddingVertical: 20, backgroundColor: '#fff', borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   statBox: { alignItems: 'center' },
-  statNumber: { fontSize: 22, fontWeight: 'bold', color: '#1D3979' },
+  statNumber: { fontSize: 22, fontWeight: 'bold', color: colors.danger },
   statLabel: { fontSize: 13, color: '#716C83', marginTop: 5, fontWeight: 'bold' },
-  businessButton: { flexDirection: 'row', backgroundColor: '#1D3979', padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, shadowColor: '#1D3979', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+  businessButton: { flexDirection: 'row', backgroundColor: colors.danger, padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, shadowColor: '#1D3979', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   businessButtonLeft: { flexDirection: 'row', alignItems: 'center' },
   businessButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   portfolioHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   portfolioTitle: { fontSize: 20, fontWeight: '800', color: '#191919' },
   portfolioSubtitle: { fontSize: 12, color: '#716C83', marginTop: 4 },
-  addPhotosButton: { backgroundColor: '#1D3979', paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  addPhotosButton: { backgroundColor: colors.danger, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 7 },
   addPhotosText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
   gridTile: { backgroundColor: '#F0EDF2', overflow: 'hidden' },
@@ -406,8 +407,8 @@ const styles = StyleSheet.create({
   tilePlaceholderText: { fontSize: 11, color: '#8B8794', marginTop: 3 },
   pinBadge: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.55)', padding: 5, borderRadius: 14 },
   portfolioNote: { color: '#716C83', fontSize: 12, lineHeight: 18, marginTop: 12, marginBottom: 28 },
-  signOutButton: { backgroundColor: 'transparent', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 10, borderWidth: 2, borderColor: '#BF0F46' },
-  signOutText: { color: '#BF0F46', fontSize: 16, fontWeight: 'bold' },
+  signOutButton: { backgroundColor: 'transparent', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 10, borderWidth: 2, borderColor: '#930d38ff' },
+  signOutText: { color: '#930d38ff', fontSize: 16, fontWeight: 'bold' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 16 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
@@ -415,5 +416,5 @@ const styles = StyleSheet.create({
   modalImage: { width: '100%', height: 300, backgroundColor: '#f5f5f5', borderRadius: 10 },
   modalActions: { flexDirection: 'row', justifyContent: 'space-evenly', paddingTop: 17, paddingBottom: 5 },
   modalAction: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 7 },
-  modalActionText: { fontSize: 15, fontWeight: '700', color: '#1D3979' },
+  modalActionText: { fontSize: 15, fontWeight: '700', color: colors.danger },
 });

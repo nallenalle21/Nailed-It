@@ -27,6 +27,7 @@ import CalendarUser from './src/screens/Calendar/CalendarUser';
 import ChatsUser from './src/screens/Chats/ChatsUser';
 import ProfileUser from './src/screens/Profile/ProfileUser';
 
+
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
@@ -58,7 +59,7 @@ function CreatorTabs() {
     <Tab.Navigator screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-      tabBarActiveTintColor: 'tomato', tabBarInactiveTintColor: 'gray',
+      tabBarActiveTintColor: '#716c13', tabBarInactiveTintColor: '#151a17',
     })}>
       <Tab.Screen name="Explore" component={ExploreCreator} />
       <Tab.Screen name="Vendors" component={VendorsStack} />
@@ -75,7 +76,7 @@ function UserTabs() {
     <Tab.Navigator screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-      tabBarActiveTintColor: 'tomato', tabBarInactiveTintColor: 'gray',
+      tabBarActiveTintColor: '#716c13', tabBarInactiveTintColor: '#151a17',
     })}>
       <Tab.Screen name="Explore" component={ExploreUser} />
       <Tab.Screen name="Vendors" component={VendorsStack} />

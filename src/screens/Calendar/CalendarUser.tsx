@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { colors } from '../../theme';
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import {
   View,
-  Text,
   TouchableOpacity,
   ScrollView,
   Modal,
@@ -40,7 +41,7 @@ const longLabel = (key: string) => {
   return `${Number(d)} ${MONTHS[Number(m) - 1]}`;
 };
 
-export default function CalendarUser() {
+export default function CalendarCreator() {
   const today = new Date();
   const todayKey = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
   const nowTime = `${pad(today.getHours())}:${pad(today.getMinutes())}`;
@@ -158,7 +159,7 @@ export default function CalendarUser() {
         <View style={{ width: 28 }} />
         <Text style={styles.title}>Calendar</Text>
         <TouchableOpacity onPress={openModal} hitSlop={10}>
-          <Ionicons name="add" size={28} color="tomato" />
+          <Ionicons name="add" size={28} color= {colors.danger} />
         </TouchableOpacity>
       </View>
 
@@ -228,11 +229,11 @@ export default function CalendarUser() {
 
         {/* Bookings for selected day */}
         <View style={styles.slotsHeader}>
-          <Text style={styles.slotsTitle}>Bookings · {longLabel(selected)}</Text>
+          <Text style={styles.slotsTitle}>my bookings · {longLabel(selected)}</Text>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
           {daySlots.length === 0 && (
-            <Text style={styles.empty}>No bookings this day. Tap + to add one.</Text>
+            <Text style={styles.empty}>hey babe, no bookings this day. Tap + to add one.</Text>
           )}
           {daySlots.map((slot) => (
             <View key={`${slot.start}-${slot.end}`} style={styles.slotWrap}>
@@ -321,12 +322,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     padding: 18,
     borderRadius: 14,
-    backgroundColor: '#fff1ee',
+    backgroundColor: colors.primarySoft,
   },
   nextUpLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'tomato',
+    color: colors.danger,
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
@@ -363,11 +364,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
-  todayCircle: { borderColor: 'tomato' },
-  selectedCircle: { backgroundColor: 'tomato', borderColor: 'tomato' },
+  todayCircle: { borderColor: colors.primary },
+  selectedCircle: { backgroundColor: colors.primary, borderColor: colors.primary },
   dayText: { fontSize: 16, color: '#222' },
-  todayText: { color: 'tomato', fontWeight: '700' },
-  selectedText: { color: '#fff', fontWeight: '700' },
+  todayText: { color: colors.text, fontWeight: '700' },
+  selectedText: { color: colors.primarySoft, fontWeight: '700' },
   slotsHeader: {
     paddingHorizontal: 16,
     paddingTop: 16,
@@ -397,7 +398,7 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'crimson',
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -427,7 +428,7 @@ const styles = StyleSheet.create({
   },
   cancel: { fontSize: 16, color: '#666' },
   saveButton: {
-    backgroundColor: 'tomato',
+    backgroundColor: colors.danger,
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 8,
