@@ -62,13 +62,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#faf9f6',
     paddingHorizontal: 18,
-    paddingTop: 24,
+    paddingTop: 80,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 26,
+    marginTop: 28,
   },
   title: {
     fontFamily: Platform.select({
