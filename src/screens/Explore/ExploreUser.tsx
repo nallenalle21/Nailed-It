@@ -1,6 +1,6 @@
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import { colors } from '../../theme';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   TextInput,
@@ -9,11 +9,14 @@ import {
   Modal,
   Platform,
   StyleSheet,
+  Animated,
+  LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 const SERVICES = [
   'Simple nail art',
@@ -59,21 +62,51 @@ const STOCKHOLM = {
 };
 
 // Placeholder inspo tiles: different heights + pastel colors
+// techId = the nail tech who posted it (used for "Go to profile")
 const INSPO = [
-  { id: 'a', h: 180, c: '#d5f6e8ff' },
-  { id: 'b', h: 240, c: '#e2ece9' },
-  { id: 'c', h: 150, c: '#dfe7fd' },
-  { id: 'd', h: 220, c: '#fff1e6' },
-  { id: 'e', h: 270, c: '#f0efeb' },
-  { id: 'f', h: 170, c: '#cddafd' },
-  { id: 'g', h: 210, c: '#fad2e1' },
-  { id: 'h', h: 160, c: '#d0f4de' },
-  { id: 'i', h: 250, c: '#e4c1f9' },
-  { id: 'j', h: 190, c: '#fcf6bd' },
+  { id: 'a', h: 180, c: '#E9C5CA', techId: '1' },
+  { id: 'b', h: 240, c: '#E0C8DB', techId: '2' },
+  { id: 'c', h: 150, c: '#D8C9C7', techId: '3' },
+  { id: 'd', h: 220, c: '#ECD8CB', techId: '4' },
+  { id: 'e', h: 270, c: '#CEC3D4', techId: '5' },
+  { id: 'f', h: 170, c: '#E6CCD4', techId: '6' },
+  { id: 'g', h: 210, c: '#CFD3CE', techId: '1' },
+  { id: 'h', h: 160, c: '#E9C5CA', techId: '2' },
+  { id: 'i', h: 250, c: '#E5D6DB', techId: '3' },
+  { id: 'j', h: 190, c: '#DEC3B8', techId: '4' },
 ];
+
+type InspoItem = (typeof INSPO)[number];
 
 const formatDate = (d: Date) =>
   d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+/* ---------- hold-and-drag helpers ---------- */
+
+type DragTargetKey = 'fav' | 'profile';
+type Point = { x: number; y: number };
+type Targets = Record<DragTargetKey, Point>;
+
+const BRAND = '#a12640';
+const TARGET_SIZE = 60;
+const HIT_RADIUS = 36;   // must stay below TARGET_DX so the drop zones never overlap
+const TARGET_DX = 40;    // each bubble is 40px left/right of the finger (80px apart)
+const TARGET_DY = 80;    // bubbles sit 80px above the finger
+const EDGE_X = 80;       // keeps the labels from being cut off at the sides
+const EDGE_TOP = 84;
+const EDGE_BOTTOM = 50;
+
+// x, y are relative to the overlay container; w, h are its size
+function getTargets(x: number, y: number, w: number, h: number): Targets {
+  const cx = Math.min(Math.max(x, EDGE_X + TARGET_DX), w - EDGE_X - TARGET_DX);
+  let cy = y - TARGET_DY;
+  if (cy < EDGE_TOP) cy = y + TARGET_DY; // too close to the top: show below the finger
+  cy = Math.min(cy, h - EDGE_BOTTOM);
+  return {
+    fav: { x: cx - TARGET_DX, y: cy },
+    profile: { x: cx + TARGET_DX, y: cy },
+  };
+}
 
 export default function ExploreUser() {
   const [query, setQuery] = useState('');
@@ -84,6 +117,103 @@ export default function ExploreUser() {
   const [serviceModal, setServiceModal] = useState(false);
   const [priceModal, setPriceModal] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
+
+  // hold-and-drag state
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [drag, setDrag] = useState<{ id: string; targets: Targets } | null>(null);
+  const [hover, setHover] = useState<DragTargetKey | null>(null);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const dragRef = useRef<{ id: string; targets: Targets } | null>(null);
+  const hoverRef = useRef<DragTargetKey | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Where the overlay container sits in the window + its size
+  const overlayRef = useRef<View>(null);
+  const offsetRef = useRef<Point>({ x: 0, y: 0 });
+  const sizeRef = useRef({ w: 390, h: 800 });
+
+  const onOverlayLayout = (e: LayoutChangeEvent) => {
+    sizeRef.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height };
+    overlayRef.current?.measureInWindow((x, y) => {
+      offsetRef.current = { x, y };
+    });
+  };
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 1600);
+  };
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
+
+  const goToProfile = (techId: string) => {
+    // TODO: navigate to the nail tech's profile, e.g.
+    // navigation.navigate('Vendors', { screen: 'VendorProfile', params: { id: techId } })
+    const tech = TECHS.find((t) => t.id === techId);
+    showToast(`Opening ${tech?.name ?? 'profile'}…`);
+  };
+
+  const handleDragStart = useCallback((id: string, x: number, y: number) => {
+    const lx = x - offsetRef.current.x;
+    const ly = y - offsetRef.current.y;
+    const state = {
+      id,
+      targets: getTargets(lx, ly, sizeRef.current.w, sizeRef.current.h),
+    };
+    dragRef.current = state;
+    hoverRef.current = null;
+    setHover(null);
+    setDrag(state);
+    setScrollEnabled(false);
+  }, []);
+
+  const handleDragMove = useCallback((x: number, y: number) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const lx = x - offsetRef.current.x;
+    const ly = y - offsetRef.current.y;
+    let h: DragTargetKey | null = null;
+    (['fav', 'profile'] as DragTargetKey[]).forEach((key) => {
+      const t = d.targets[key];
+      if (Math.hypot(lx - t.x, ly - t.y) < HIT_RADIUS) h = key;
+    });
+    if (h !== hoverRef.current) {
+      hoverRef.current = h;
+      setHover(h);
+    }
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    const d = dragRef.current;
+    if (!d) return;
+    const chosen = hoverRef.current;
+    dragRef.current = null;
+    hoverRef.current = null;
+    setDrag(null);
+    setHover(null);
+    setScrollEnabled(true);
+
+    if (chosen === 'fav') {
+      setFavorites((prev) => {
+        const next = new Set(prev);
+        if (next.has(d.id)) {
+          next.delete(d.id);
+          showToast('Removed from favorites');
+        } else {
+          next.add(d.id);
+          showToast('Added to favorites');
+        }
+        return next;
+      });
+    } else if (chosen === 'profile') {
+      const item = INSPO.find((i) => i.id === d.id);
+      if (item) goToProfile(item.techId);
+    }
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -115,6 +245,17 @@ export default function ExploreUser() {
   // Split inspo into two columns for the masonry layout
   const colA = INSPO.filter((_, i) => i % 2 === 0);
   const colB = INSPO.filter((_, i) => i % 2 === 1);
+
+  const renderTile = (item: InspoItem) => (
+    <InspoTile
+      key={item.id}
+      item={item}
+      favorite={favorites.has(item.id)}
+      onStart={handleDragStart}
+      onMove={handleDragMove}
+      onEnd={handleDragEnd}
+    />
+  );
 
   const renderOptionModal = (
     visible: boolean,
@@ -162,94 +303,120 @@ export default function ExploreUser() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* PART 1: search + filters */}
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={18} color="#888" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="search nail techs, areas, styles"
-            value={query}
-            onChangeText={setQuery}
-            returnKeyType="search"
-          />
-          {query ? (
-            <TouchableOpacity onPress={() => setQuery('')} hitSlop={10}>
-              <Ionicons name="close-circle" size={18} color="#bbb" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
+      {/* Wrapper so the drag overlay can sit on top of the scroll content */}
+      <View
+        ref={overlayRef}
+        style={{ flex: 1 }}
+        collapsable={false}
+        onLayout={onOverlayLayout}
+      >
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
+          scrollEnabled={scrollEnabled}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 32 }}
         >
-          <FilterPill
-            icon="brush-outline"
-            label={service ?? 'Service'}
-            active={!!service}
-            onPress={() => setServiceModal(true)}
-          />
-          <FilterPill
-            icon="cash-outline"
-            label={priceIdx === 0 ? 'Price' : PRICE_RANGES[priceIdx].label}
-            active={priceIdx !== 0}
-            onPress={() => setPriceModal(true)}
-          />
-          <FilterPill
-            icon="calendar-outline"
-            label={date ? formatDate(date) : 'Date'}
-            active={!!date}
-            onPress={() => setDateOpen(true)}
-          />
-          {hasFilters ? (
-            <TouchableOpacity style={styles.clear} onPress={clearAll}>
-              <Text style={styles.clearText}>Clear</Text>
-            </TouchableOpacity>
-          ) : null}
+          {/* PART 1: search + filters */}
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={18} color="#888" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="search nail techs, areas, styles"
+              value={query}
+              onChangeText={setQuery}
+              returnKeyType="search"
+            />
+            {query ? (
+              <TouchableOpacity onPress={() => setQuery('')} hitSlop={10}>
+                <Ionicons name="close-circle" size={18} color="#bbb" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterRow}
+          >
+            <FilterPill
+              icon="brush-outline"
+              label={service ?? 'Service'}
+              active={!!service}
+              onPress={() => setServiceModal(true)}
+            />
+            <FilterPill
+              icon="cash-outline"
+              label={priceIdx === 0 ? 'Price' : PRICE_RANGES[priceIdx].label}
+              active={priceIdx !== 0}
+              onPress={() => setPriceModal(true)}
+            />
+            <FilterPill
+              icon="calendar-outline"
+              label={date ? formatDate(date) : 'Date'}
+              active={!!date}
+              onPress={() => setDateOpen(true)}
+            />
+            {hasFilters ? (
+              <TouchableOpacity style={styles.clear} onPress={clearAll}>
+                <Text style={styles.clearText}>Clear</Text>
+              </TouchableOpacity>
+            ) : null}
+          </ScrollView>
+
+          {/* PART 2: map */}
+          <View style={styles.mapHeader}>
+            <Text style={styles.sectionTitle}>Nail techs in Stockholm</Text>
+            <Text style={styles.count}>{filtered.length} found</Text>
+          </View>
+          <View style={styles.mapWrap}>
+            <MapView style={styles.map} initialRegion={STOCKHOLM}>
+              {filtered.map((t) => (
+                <Marker
+                  key={t.id}
+                  coordinate={{ latitude: t.lat, longitude: t.lng }}
+                  title={t.name}
+                  description={`${t.area} · from ${t.price} kr`}
+                  pinColor={colors.primary}
+                />
+              ))}
+            </MapView>
+          </View>
+
+          {/* PART 3: inspo feed */}
+          <Text style={[styles.sectionTitle, { marginHorizontal: 16, marginTop: 24 }]}>
+            get inspired
+          </Text>
+          <View style={styles.feed}>
+            <View style={styles.feedCol}>{colA.map(renderTile)}</View>
+            <View style={styles.feedCol}>{colB.map(renderTile)}</View>
+          </View>
         </ScrollView>
 
-        {/* PART 2: map */}
-        <View style={styles.mapHeader}>
-          <Text style={styles.sectionTitle}>Nail techs in Stockholm</Text>
-          <Text style={styles.count}>{filtered.length} found</Text>
-        </View>
-        <View style={styles.mapWrap}>
-          <MapView style={styles.map} initialRegion={STOCKHOLM}>
-            {filtered.map((t) => (
-              <Marker
-                key={t.id}
-                coordinate={{ latitude: t.lat, longitude: t.lng }}
-                title={t.name}
-                description={`${t.area} · from ${t.price} kr`}
-                pinColor={colors.primary}
-              />
-            ))}
-          </MapView>
-        </View>
+        {/* Hold-and-drag overlay */}
+        {drag && (
+          <View style={styles.dragOverlay} pointerEvents="none">
+            <DragBubble
+              icon={favorites.has(drag.id) ? 'heart-dislike' : 'heart'}
+              label={favorites.has(drag.id) ? 'Remove from favorites' : 'Add to favorites'}
+              x={drag.targets.fav.x}
+              y={drag.targets.fav.y}
+              hovered={hover === 'fav'}
+            />
+            <DragBubble
+              icon="person"
+              label="Go to profile"
+              x={drag.targets.profile.x}
+              y={drag.targets.profile.y}
+              hovered={hover === 'profile'}
+            />
+          </View>
+        )}
 
-        {/* PART 3: inspo feed */}
-        <Text style={[styles.sectionTitle, { marginHorizontal: 16, marginTop: 24 }]}>
-          get inspired
-        </Text>
-        <View style={styles.feed}>
-          <View style={styles.feedCol}>
-            {colA.map((item) => (
-              <View key={item.id} style={[styles.tile, { height: item.h, backgroundColor: item.c }]}>
-                <Ionicons name="image-outline" size={28} color="rgba(0,0,0,0.2)" />
-              </View>
-            ))}
+        {toast && (
+          <View style={styles.toast} pointerEvents="none">
+            <Text style={styles.toastText}>{toast}</Text>
           </View>
-          <View style={styles.feedCol}>
-            {colB.map((item) => (
-              <View key={item.id} style={[styles.tile, { height: item.h, backgroundColor: item.c }]}>
-                <Ionicons name="image-outline" size={28} color="rgba(0,0,0,0.2)" />
-              </View>
-            ))}
-          </View>
-        </View>
-      </ScrollView>
+        )}
+      </View>
 
       {/* Service filter */}
       {renderOptionModal(serviceModal, () => setServiceModal(false), 'Type of service', SERVICES, service, setService)}
@@ -329,6 +496,89 @@ export default function ExploreUser() {
   );
 }
 
+/* ---------- Inspo tile with long-press + drag gesture ---------- */
+
+function InspoTile({
+  item,
+  favorite,
+  onStart,
+  onMove,
+  onEnd,
+}: {
+  item: InspoItem;
+  favorite: boolean;
+  onStart: (id: string, x: number, y: number) => void;
+  onMove: (x: number, y: number) => void;
+  onEnd: () => void;
+}) {
+  const gesture = Gesture.Pan()
+    .runOnJS(true)
+    .activateAfterLongPress(350)
+    .onStart((e) => onStart(item.id, e.absoluteX, e.absoluteY))
+    .onUpdate((e) => onMove(e.absoluteX, e.absoluteY))
+    .onFinalize(() => onEnd());
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <View style={[styles.tile, { height: item.h, backgroundColor: item.c }]}>
+        <Ionicons name="image-outline" size={28} color="rgba(0,0,0,0.2)" />
+        {favorite && (
+          <View style={styles.favBadge}>
+            <Ionicons name="heart" size={14} color={BRAND} />
+          </View>
+        )}
+      </View>
+    </GestureDetector>
+  );
+}
+
+/* ---------- Bubble that pops up while dragging ---------- */
+
+function DragBubble({
+  icon,
+  label,
+  x,
+  y,
+  hovered,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  x: number;
+  y: number;
+  hovered: boolean;
+}) {
+  const scale = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: hovered ? 1.25 : 1,
+      friction: 6,
+      useNativeDriver: true,
+    }).start();
+  }, [hovered, scale]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.bubble,
+        {
+          left: x - TARGET_SIZE / 2,
+          top: y - TARGET_SIZE / 2,
+          backgroundColor: hovered ? '#FBE9EE' : '#fff',
+          transform: [{ scale }],
+        },
+      ]}
+    >
+      <Ionicons name={icon} size={28} color={BRAND} />
+      {hovered && (
+        <View style={styles.bubbleLabel}>
+          <Text style={styles.bubbleLabelText}>{label}</Text>
+        </View>
+      )}
+    </Animated.View>
+  );
+}
+
 function FilterPill({
   icon,
   label,
@@ -378,10 +628,10 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     backgroundColor: '#fff',
   },
-  pillActive: { backgroundColor: colors.primary, borderColor:colors.primary },
+  pillActive: { backgroundColor: colors.danger, borderColor: colors.danger },
   pillText: { fontSize: 14, color: '#333', fontWeight: '500' },
   clear: { paddingHorizontal: 8 },
-  clearText: { color: colors.primary, fontWeight: '600' },
+  clearText: { color: colors.danger, fontWeight: '600' },
   mapHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -397,6 +647,61 @@ const styles = StyleSheet.create({
   feed: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 12, gap: 8 },
   feedCol: { flex: 1, gap: 8 },
   tile: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  favBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dragOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  bubble: {
+    position: 'absolute',
+    width: TARGET_SIZE,
+    height: TARGET_SIZE,
+    borderRadius: TARGET_SIZE / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+  },
+  bubbleLabel: {
+    position: 'absolute',
+    top: -40,
+    width: 190,
+    left: (TARGET_SIZE - 190) / 2,
+    alignItems: 'center',
+  },
+  bubbleLabelText: {
+    backgroundColor: '#222',
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  toast: {
+    position: 'absolute',
+    bottom: 24,
+    alignSelf: 'center',
+    backgroundColor: '#222',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  toastText: { color: '#fff', fontSize: 14, fontWeight: '500' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: '#fff',
@@ -415,7 +720,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#ddd',
   },
   optionText: { fontSize: 16 },
-  optionActive: { color:colors.primary, fontWeight: '600' },
+  optionActive: { color: colors.danger, fontWeight: '600' },
   dateButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -424,6 +729,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   cancel: { fontSize: 16, color: '#666' },
-  doneButton: { backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
+  doneButton: { backgroundColor: colors.danger, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
   doneText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

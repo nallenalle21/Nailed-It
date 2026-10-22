@@ -1,5 +1,7 @@
+import 'react-native-gesture-handler'; // must stay the very first import
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -113,28 +115,38 @@ export default function App() {
     });
   }, []);
 
-  if (loading) return <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator size="large" /></View>;
+  if (loading) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <ActivityIndicator size="large" />
+        </View>
+      </GestureHandlerRootView>
+    );
+  }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!session ? (
-          <Stack.Screen name="Login" component={LoginScreen} />
-        ) : role === 'creator' ? (
-          <Stack.Group>
-            <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
-            <Stack.Screen name="BusinessCreator" component={BusinessCreator} />
-            <Stack.Screen name="ServicesAndPrices" component={ServicesAndPrices} />
-            <Stack.Screen name="WorkLocations" component={WorkLocations} />
-            <Stack.Screen name="Certificates" component={Certificates} />
-            <Stack.Screen name="Bookkeeping" component={Bookkeeping} />
-          </Stack.Group>
-        ) : (
-          <Stack.Group>
-            <Stack.Screen name="UserTabs" component={UserTabs} />
-          </Stack.Group>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {!session ? (
+            <Stack.Screen name="Login" component={LoginScreen} />
+          ) : role === 'creator' ? (
+            <Stack.Group>
+              <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
+              <Stack.Screen name="BusinessCreator" component={BusinessCreator} />
+              <Stack.Screen name="ServicesAndPrices" component={ServicesAndPrices} />
+              <Stack.Screen name="WorkLocations" component={WorkLocations} />
+              <Stack.Screen name="Certificates" component={Certificates} />
+              <Stack.Screen name="Bookkeeping" component={Bookkeeping} />
+            </Stack.Group>
+          ) : (
+            <Stack.Group>
+              <Stack.Screen name="UserTabs" component={UserTabs} />
+            </Stack.Group>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }

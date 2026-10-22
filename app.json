@@ -20,6 +20,9 @@
     },
     "web": {
       "favicon": "./assets/new-logo.png"
-    }
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }
