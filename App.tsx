@@ -64,7 +64,7 @@ function CreatorTabs() {
       tabBarActiveTintColor: '#716c13', tabBarInactiveTintColor: '#151a17',
     })}>
       <Tab.Screen name="Explore" component={ExploreCreator} />
-      <Tab.Screen name="Vendors" component={VendorsStack} />
+      <Tab.Screen name="Vendors" component={VendorsStack} options={{tabBarButton: () => null, tabBarItemStyle: { display: 'none' },}}/>
       <Tab.Screen name="Wishlist" component={WishlistCreator} />
       <Tab.Screen name="Calendar" component={CalendarCreator} />
       <Tab.Screen name="Chats" component={ChatsCreator} />

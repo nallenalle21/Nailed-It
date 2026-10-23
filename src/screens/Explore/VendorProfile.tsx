@@ -1,7 +1,7 @@
 /**
  * Public customer view of a creator, opened with route.params.vendorId.
  * Real data: public username, services, submitted certificates.
- * Prototype-only UI: reviews, favorites, portfolio, Book handoff.
+ * Favorites are saved in Supabase; reviews and booking are still prototypes.
  * IMPORTANT: The current certificates table has no verification status.
  * Never label submitted certificates as verified until backend approval exists.
  */
@@ -23,6 +23,8 @@ import { supabase } from '../../services/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
+import SaveToBoardModal from '../../components/SaveToBoardModal';
+import { getMembership, getSavedTargetIds } from '../../services/wishlist';
 
 type Vendor = { id: string; username: string | null; role: string };
 type Service = {
@@ -78,7 +80,10 @@ export default function VendorProfile({ navigation, route }: any) {
   const [posts, setPosts] = useState<VendorPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
-  const [isFavoritePreview, setIsFavoritePreview] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [saveProfileOpen, setSaveProfileOpen] = useState(false);
+  const [savePostId, setSavePostId] = useState<string | null>(null);
+  const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [expandedPost, setExpandedPost] = useState<PostPreview | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -93,7 +98,7 @@ export default function VendorProfile({ navigation, route }: any) {
     setPosts([]);
     setErrors([]);
     setLoading(true);
-    setIsFavoritePreview(false);
+    setIsSaved(false);
 
     if (!vendorId) {
       setErrors(['No vendor was selected.']);
@@ -149,6 +154,25 @@ export default function VendorProfile({ navigation, route }: any) {
     void load();
     return () => { current = false; };
   }, [vendorId, refreshKey]));
+
+  const refreshSavedProfile = useCallback(async () => {
+    if (!vendorId) return;
+    try {
+      const boards = await getMembership('vendor', vendorId);
+      setIsSaved(boards.size > 0);
+    } catch (error) { console.warn('[VendorProfile] Could not load saved status:', error); }
+  }, [vendorId]);
+
+  const refreshSavedPhotos = useCallback(async () => {
+    try { setSavedPostIds(await getSavedTargetIds('post')); }
+    catch (error) { console.warn('[VendorProfile] Could not load saved images:', error); }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    void refreshSavedProfile();
+    void refreshSavedPhotos();
+    return () => {};
+  }, [refreshSavedProfile, refreshSavedPhotos]));
 
   const publicTiles: PostPreview[] = [
     ...posts.map(post => ({
@@ -235,18 +259,14 @@ export default function VendorProfile({ navigation, route }: any) {
             <Text style={styles.creatorLabel}>Creative professional · Nailed-It</Text>
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityLabel={isFavoritePreview ? 'Unsave creator preview' : 'Save creator preview'}
+              accessibilityLabel={isSaved ? 'Manage saved profile boards' : 'Save creator to a board'}
               style={styles.favoriteButton}
-              onPress={() => setIsFavoritePreview(value => !value)}
+              onPress={() => setSaveProfileOpen(true)}
             >
-              <Ionicons
-                name={isFavoritePreview ? 'heart' : 'heart-outline'}
-                size={18}
-                color={theme.accent}
-              />
-              <Text style={styles.favoriteText}>{isFavoritePreview ? 'Saved (preview)' : 'Save creator'}</Text>
+              <Ionicons name={isSaved ? 'heart' : 'heart-outline'} size={18} color={theme.accent} />
+              <Text style={styles.favoriteText}>{isSaved ? 'Saved · manage boards' : 'Save creator'}</Text>
             </TouchableOpacity>
-            <Text style={styles.prototypeNote}>Favorites are not saved to Supabase yet.</Text>
+            <Text style={styles.prototypeNote}>Save this creator to your named wishlist boards.</Text>
           </View>
 
           {errors.length > 0 && (
@@ -336,7 +356,7 @@ export default function VendorProfile({ navigation, route }: any) {
           <View style={styles.portfolioHeading}>
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionHeading}>Portfolio</Text>
-              <Text style={styles.sectionIntro}>Three-column feed · Tap a tile to expand</Text>
+              <Text style={styles.sectionIntro}>Three-column feed · Tap to expand · Hold a photo to save</Text>
             </View>
             <Ionicons name="grid-outline" size={20} color={theme.muted} />
           </View>
@@ -345,8 +365,9 @@ export default function VendorProfile({ navigation, route }: any) {
               <TouchableOpacity
                 key={post.id}
                 accessibilityRole="button"
-                accessibilityLabel={`Open placeholder ${post.caption}`}
+                accessibilityLabel={`Open ${post.uri ? "portfolio photo" : "placeholder"}: ${post.caption}`}
                 onPress={() => setExpandedPost(post)}
+                onLongPress={() => { if (post.uri) setSavePostId(post.id); }}
                 style={[styles.portfolioTile, { backgroundColor: post.color }]}
               >
                 {post.uri ? (
@@ -359,12 +380,21 @@ export default function VendorProfile({ navigation, route }: any) {
                     <Ionicons name="pin" size={13} color={theme.white} />
                   </View>
                 )}
+                {post.uri && (
+                  <TouchableOpacity
+                    style={styles.postSaveButton}
+                    accessibilityLabel="Save this portfolio photo to a board"
+                    onPress={() => setSavePostId(post.id)}
+                  >
+                    <Ionicons name={savedPostIds.has(post.id) ? 'heart' : 'heart-outline'} size={17} color={theme.accent} />
+                  </TouchableOpacity>
+                )}
               </TouchableOpacity>
             ))}
           </View>
           <Text style={styles.portfolioNote}>
-            Sample image tiles only. The first three demonstrate optional pinned posts.
-            Actual posts, clicks and pin settings require a future posts table.
+            Uploaded artwork is shown first, with pinned photos at the top.
+            Empty positions are placeholders; hold an uploaded photo to save it.
           </Text>
         </ScrollView>
       )}
@@ -399,6 +429,20 @@ export default function VendorProfile({ navigation, route }: any) {
           </View>
         </View>
       </Modal>
+      <SaveToBoardModal
+        visible={saveProfileOpen}
+        kind="vendor"
+        targetId={vendorId ?? null}
+        onClose={() => setSaveProfileOpen(false)}
+        onChanged={() => void refreshSavedProfile()}
+      />
+      <SaveToBoardModal
+        visible={savePostId !== null}
+        kind="post"
+        targetId={savePostId}
+        onClose={() => setSavePostId(null)}
+        onChanged={() => void refreshSavedPhotos()}
+      />
     </SafeAreaView>
   );
 }
@@ -455,6 +499,7 @@ const styles = StyleSheet.create({
   portfolioTile: { width: '32.7%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   portfolioImage: { width: '100%', height: '100%' },
   pinIcon: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(39,29,43,0.55)', borderRadius: 12, padding: 5 },
+  postSaveButton: { position: 'absolute', bottom: 7, right: 7, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 20, padding: 7 },
   portfolioNote: { color: theme.muted, fontSize: 12, lineHeight: 18, marginHorizontal: 20, marginTop: 13 },
   modalShade: { flex: 1, backgroundColor: 'rgba(25,18,26,0.66)', justifyContent: 'center', padding: 18 },
   modalCard: { padding: 16, backgroundColor: theme.white, borderRadius: 17 },

@@ -1,8 +1,16 @@
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import { colors } from '../../theme';
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../../services/supabase';
+import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
+import SaveToBoardModal from '../../components/SaveToBoardModal';
+import { getSavedTargetIds } from '../../services/wishlist';
 import {
   View,
+  Image,
+  ActivityIndicator,
+  RefreshControl,
   TextInput,
   TouchableOpacity,
   ScrollView,
@@ -61,22 +69,27 @@ const STOCKHOLM = {
   longitudeDelta: 0.09,
 };
 
-// Placeholder inspo tiles: different heights + pastel colors
-// techId = the nail tech who posted it (used for "Go to profile")
-const INSPO = [
-  { id: 'a', h: 180, c: '#E9C5CA', techId: '1' },
-  { id: 'b', h: 240, c: '#E0C8DB', techId: '2' },
-  { id: 'c', h: 150, c: '#D8C9C7', techId: '3' },
-  { id: 'd', h: 220, c: '#ECD8CB', techId: '4' },
-  { id: 'e', h: 270, c: '#CEC3D4', techId: '5' },
-  { id: 'f', h: 170, c: '#E6CCD4', techId: '6' },
-  { id: 'g', h: 210, c: '#CFD3CE', techId: '1' },
-  { id: 'h', h: 160, c: '#E9C5CA', techId: '2' },
-  { id: 'i', h: 250, c: '#E5D6DB', techId: '3' },
-  { id: 'j', h: 190, c: '#DEC3B8', techId: '4' },
-];
+// The Explore feed uses the actual posts uploaded to Supabase by creators.
+// Map TECHS above are still placeholders until work locations are integrated.
+type InspoItem = {
+  id: string;
+  vendorId: string;
+  creatorName: string;
+  uri: string;
+  caption: string;
+  h: number;
+};
 
-type InspoItem = (typeof INSPO)[number];
+type OfferedService = {
+  user_id: string;
+  name: string;
+  category: string | null;
+  price: number | string;
+  discount_price: number | string | null;
+};
+
+const MASONRY_HEIGHTS = [180, 240, 160, 215, 255, 175, 220, 190, 235, 200];
+const POSTS_PAGE_SIZE = 250;
 
 const formatDate = (d: Date) =>
   d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -108,7 +121,14 @@ function getTargets(x: number, y: number, w: number, h: number): Targets {
   };
 }
 
-export default function ExploreUser() {
+export default function ExploreCreator({ navigation }: any) {
+  const [inspoPosts, setInspoPosts] = useState<InspoItem[]>([]);
+  const [offeredServices, setOfferedServices] = useState<OfferedService[]>([]);
+  const [feedLoading, setFeedLoading] = useState(true);
+  const [feedError, setFeedError] = useState<string | null>(null);
+  const [feedWarning, setFeedWarning] = useState<string | null>(null);
+  const [feedRefresh, setFeedRefresh] = useState(0);
+
   const [query, setQuery] = useState('');
   const [service, setService] = useState<string | null>(null);
   const [priceIdx, setPriceIdx] = useState(0);
@@ -120,6 +140,7 @@ export default function ExploreUser() {
 
   // hold-and-drag state
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [saveTarget, setSaveTarget] = useState<InspoItem | null>(null);
   const [drag, setDrag] = useState<{ id: string; targets: Targets } | null>(null);
   const [hover, setHover] = useState<DragTargetKey | null>(null);
   const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -150,12 +171,89 @@ export default function ExploreUser() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
-  const goToProfile = (techId: string) => {
-    // TODO: navigate to the nail tech's profile, e.g.
-    // navigation.navigate('Vendors', { screen: 'VendorProfile', params: { id: techId } })
-    const tech = TECHS.find((t) => t.id === techId);
-    showToast(`Opening ${tech?.name ?? 'profile'}…`);
-  };
+  // Refresh whenever Explore is focused, so recently uploaded posts become visible.
+  // Pages avoid Supabase's usual default cap on a single select query.
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    setFeedLoading(true);
+    setFeedError(null);
+    setFeedWarning(null);
+
+    const loadCreatorPosts = async () => {
+      try {
+        const creatorsResult = await supabase.from('profiles')
+          .select('id, username')
+          .eq('role', 'creator');
+        if (creatorsResult.error) throw creatorsResult.error;
+
+        const creators = (creatorsResult.data ?? []) as { id: string; username: string | null }[];
+        const nameById = new Map(creators.map(p => [p.id, p.username?.trim() || 'Unnamed creator']));
+        const allPosts: VendorPost[] = [];
+
+        for (let from = 0; ; from += POSTS_PAGE_SIZE) {
+          const result = await supabase.from('vendor_posts')
+            .select('id, vendor_id, storage_path, caption, is_pinned, created_at')
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, from + POSTS_PAGE_SIZE - 1);
+          if (result.error) throw result.error;
+          const page = (result.data ?? []) as VendorPost[];
+          allPosts.push(...page);
+          if (page.length < POSTS_PAGE_SIZE) break;
+        }
+
+        // Services support feed search and price/service filters, when available.
+        const servicesResult = await supabase.from('services')
+          .select('user_id, name, category, price, discount_price');
+
+        if (!active) return;
+        setOfferedServices(servicesResult.error ? [] : (servicesResult.data ?? []) as OfferedService[]);
+        setFeedWarning(servicesResult.error
+          ? `Services could not be loaded; service and price filters may show no results: ${servicesResult.error.message}`
+          : null);
+        const visiblePosts = allPosts.filter(post => nameById.has(post.vendor_id));
+        setInspoPosts(visiblePosts.map((post, index) => ({
+          id: post.id,
+          vendorId: post.vendor_id,
+          creatorName: nameById.get(post.vendor_id)!,
+          caption: post.caption || '',
+          uri: publicPostUrl(post.storage_path),
+          h: MASONRY_HEIGHTS[index % MASONRY_HEIGHTS.length],
+        })));
+      } catch (caughtError) {
+        if (active) {
+          setFeedError(caughtError instanceof Error ? caughtError.message : String(caughtError));
+        }
+      } finally {
+        if (active) setFeedLoading(false);
+      }
+    };
+
+    void loadCreatorPosts();
+    return () => { active = false; };
+  }, [feedRefresh]));
+
+  // The hearts reflect Supabase, including saves made in other boards/screens.
+  const reloadFavorites = useCallback(async () => {
+    try {
+      setFavorites(await getSavedTargetIds('post'));
+    } catch (error) {
+      console.warn('[Explore] Could not read saved photos:', error);
+    }
+  }, []);
+  useFocusEffect(useCallback(() => {
+    void reloadFavorites();
+    return () => {};
+  }, [reloadFavorites]));
+
+  // VendorProfile lives inside the Vendors tab's nested stack, as in the
+  // persistent-bottom-tabs App.tsx previously used in this project.
+  const goToProfile = useCallback((vendorId: string) => {
+    navigation.navigate('Vendors', {
+      screen: 'VendorProfile',
+      params: { vendorId },
+    });
+  }, [navigation]);
 
   const handleDragStart = useCallback((id: string, x: number, y: number) => {
     const lx = x - offsetRef.current.x;
@@ -198,22 +296,13 @@ export default function ExploreUser() {
     setScrollEnabled(true);
 
     if (chosen === 'fav') {
-      setFavorites((prev) => {
-        const next = new Set(prev);
-        if (next.has(d.id)) {
-          next.delete(d.id);
-          showToast('Removed from favorites');
-        } else {
-          next.add(d.id);
-          showToast('Added to favorites');
-        }
-        return next;
-      });
+      const item = inspoPosts.find(i => i.id === d.id);
+      if (item) setSaveTarget(item);
     } else if (chosen === 'profile') {
-      const item = INSPO.find((i) => i.id === d.id);
-      if (item) goToProfile(item.techId);
+      const item = inspoPosts.find((i) => i.id === d.id);
+      if (item) goToProfile(item.vendorId);
     }
-  }, []);
+  }, [inspoPosts, goToProfile]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -234,6 +323,45 @@ export default function ExploreUser() {
     });
   }, [query, service, priceIdx]);
 
+  // The masonry feed is based on real images; prices/services come from that
+  // creator's own services. Date availability and geography are not connected yet.
+  const servicesByVendor = useMemo(() => {
+    const byVendor = new Map<string, OfferedService[]>();
+    for (const item of offeredServices) {
+      if (!item.user_id) continue;
+      const current = byVendor.get(item.user_id) ?? [];
+      current.push(item);
+      byVendor.set(item.user_id, current);
+    }
+    return byVendor;
+  }, [offeredServices]);
+
+  const filteredPosts = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const selectedService = service?.toLowerCase();
+    const range = PRICE_RANGES[priceIdx];
+    return inspoPosts.filter(post => {
+      const offered = servicesByVendor.get(post.vendorId) ?? [];
+      if (q && !(
+        post.creatorName.toLowerCase().includes(q) ||
+        post.caption.toLowerCase().includes(q) ||
+        offered.some(s => s.name.toLowerCase().includes(q) || (s.category || '').toLowerCase().includes(q))
+      )) return false;
+
+      if (selectedService && !offered.some(s =>
+        s.name.toLowerCase().includes(selectedService) ||
+        (s.category || '').toLowerCase().includes(selectedService)
+      )) return false;
+
+      if (priceIdx !== 0 && !offered.some(s => {
+        const price = Number(s.discount_price ?? s.price);
+        return Number.isFinite(price) && price >= range.min && price <= range.max;
+      })) return false;
+
+      return true;
+    });
+  }, [inspoPosts, servicesByVendor, query, service, priceIdx]);
+
   const hasFilters = service || priceIdx !== 0 || date || query;
   const clearAll = () => {
     setQuery('');
@@ -243,8 +371,8 @@ export default function ExploreUser() {
   };
 
   // Split inspo into two columns for the masonry layout
-  const colA = INSPO.filter((_, i) => i % 2 === 0);
-  const colB = INSPO.filter((_, i) => i % 2 === 1);
+  const colA = filteredPosts.filter((_, i) => i % 2 === 0);
+  const colB = filteredPosts.filter((_, i) => i % 2 === 1);
 
   const renderTile = (item: InspoItem) => (
     <InspoTile
@@ -312,6 +440,9 @@ export default function ExploreUser() {
       >
         <ScrollView
           scrollEnabled={scrollEnabled}
+          refreshControl={
+            <RefreshControl refreshing={feedLoading} onRefresh={() => setFeedRefresh(n => n + 1)} />
+          }
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 32 }}
         >
@@ -364,7 +495,7 @@ export default function ExploreUser() {
 
           {/* PART 2: map */}
           <View style={styles.mapHeader}>
-            <Text style={styles.sectionTitle}>Nail techs in Stockholm</Text>
+            <Text style={styles.sectionTitle}>Sample studios in Stockholm</Text>
             <Text style={styles.count}>{filtered.length} found</Text>
           </View>
           <View style={styles.mapWrap}>
@@ -381,14 +512,37 @@ export default function ExploreUser() {
             </MapView>
           </View>
 
-          {/* PART 3: inspo feed */}
-          <Text style={[styles.sectionTitle, { marginHorizontal: 16, marginTop: 24 }]}>
-            get inspired
-          </Text>
-          <View style={styles.feed}>
-            <View style={styles.feedCol}>{colA.map(renderTile)}</View>
-            <View style={styles.feedCol}>{colB.map(renderTile)}</View>
+          {/* PART 3: real artwork feed */}
+          <Text style={styles.demoMapNote}>Map pins are demonstration data, not actual creator addresses.</Text>
+          <View style={styles.feedHeading}>
+            <Text style={styles.sectionTitle}>get inspired</Text>
+            <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
+              <Ionicons name="refresh" size={21} color={colors.primary} />
+            </TouchableOpacity>
           </View>
+          {date && <Text style={styles.feedNotice}>Date-based photo filtering will be available once booking availability is connected.</Text>}
+          {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
+          {feedError ? (
+            <View style={styles.feedStatus}>
+              <Text style={styles.feedError}>Could not load creator photos: {feedError}</Text>
+              <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)}>
+                <Text style={styles.retryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : feedLoading && inspoPosts.length === 0 ? (
+            <ActivityIndicator style={{ marginTop: 28 }} color={colors.primary} size="large" />
+          ) : filteredPosts.length === 0 ? (
+            <Text style={styles.feedEmpty}>
+              {inspoPosts.length === 0
+                ? 'No creator photos have been uploaded yet.'
+                : 'No photos match these filters.'}
+            </Text>
+          ) : (
+            <View style={styles.feed}>
+              <View style={styles.feedCol}>{colA.map(renderTile)}</View>
+              <View style={styles.feedCol}>{colB.map(renderTile)}</View>
+            </View>
+          )}
         </ScrollView>
 
         {/* Hold-and-drag overlay */}
@@ -396,7 +550,7 @@ export default function ExploreUser() {
           <View style={styles.dragOverlay} pointerEvents="none">
             <DragBubble
               icon={favorites.has(drag.id) ? 'heart-dislike' : 'heart'}
-              label={favorites.has(drag.id) ? 'Remove from favorites' : 'Add to favorites'}
+              label={favorites.has(drag.id) ? 'Manage saved boards' : 'Save to a board'}
               x={drag.targets.fav.x}
               y={drag.targets.fav.y}
               hovered={hover === 'fav'}
@@ -492,6 +646,13 @@ export default function ExploreUser() {
           />
         )
       )}
+      <SaveToBoardModal
+        visible={saveTarget !== null}
+        kind="post"
+        targetId={saveTarget?.id ?? null}
+        onClose={() => setSaveTarget(null)}
+        onChanged={() => { void reloadFavorites(); showToast('Saved boards updated'); }}
+      />
     </SafeAreaView>
   );
 }
@@ -518,10 +679,23 @@ function InspoTile({
     .onUpdate((e) => onMove(e.absoluteX, e.absoluteY))
     .onFinalize(() => onEnd());
 
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [item.uri]);
+
   return (
     <GestureDetector gesture={gesture}>
-      <View style={[styles.tile, { height: item.h, backgroundColor: item.c }]}>
-        <Ionicons name="image-outline" size={28} color="rgba(0,0,0,0.2)" />
+      <View style={[styles.tile, { height: item.h, backgroundColor: '#F1E9EE' }]}>
+        {imageFailed ? (
+          <Ionicons name="image-outline" size={28} color="#A793A1" />
+        ) : (
+          <Image
+            source={{ uri: item.uri }}
+            style={styles.tileImage}
+            resizeMode="cover"
+            onError={() => setImageFailed(true)}
+            accessibilityLabel={`Photo by ${item.creatorName}`}
+          />
+        )}
         {favorite && (
           <View style={styles.favBadge}>
             <Ionicons name="heart" size={14} color={BRAND} />
@@ -646,7 +820,15 @@ const styles = StyleSheet.create({
   map: { flex: 1 },
   feed: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 12, gap: 8 },
   feedCol: { flex: 1, gap: 8 },
-  tile: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  tile: { borderRadius: 14, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  tileImage: { width: '100%', height: '100%' },
+  feedHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 16, marginTop: 24 },
+  demoMapNote: { color: '#888', fontSize: 12, marginHorizontal: 16, marginTop: 8 },
+  feedNotice: { color: '#786B7A', fontSize: 13, marginHorizontal: 16, marginTop: 10 },
+  feedStatus: { marginHorizontal: 16, marginTop: 15, padding: 16, backgroundColor: '#FFF1F4', borderRadius: 12 },
+  feedError: { color: '#A12339', fontSize: 13, lineHeight: 19 },
+  retryText: { color: '#A12339', fontWeight: '700', marginTop: 10 },
+  feedEmpty: { color: '#716C83', fontSize: 14, marginHorizontal: 16, marginTop: 20, marginBottom: 28 },
   favBadge: {
     position: 'absolute',
     top: 8,
