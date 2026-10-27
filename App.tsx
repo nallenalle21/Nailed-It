@@ -145,18 +145,21 @@ export default function App() {
               <Stack.Screen name="CustomerProfile" component={CustomerProfile} />
               <Stack.Screen name="CalendarCreator" component={CalendarCreator} options={{ headerShown: false }} />
               <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
+              <Stack.Screen name="VendorProfile" component={VendorProfile} options={{ headerShown: false }} />
             </Stack.Group>
           ) : (
             <Stack.Group>
               <Stack.Screen name="UserTabs" component={UserTabs} />
-
-              {/* ADD CHATROOM HERE FOR REGULAR USERS */}
               <Stack.Screen 
                 name="ChatRoom" 
                 component={ChatRoom} 
                 options={{ headerShown: false }} 
               />
-
+              <Stack.Screen 
+                name="VendorProfile" 
+                component={VendorProfile} 
+                options={{ headerShown: false }} 
+              />
             </Stack.Group>
           )}
         </Stack.Navigator>

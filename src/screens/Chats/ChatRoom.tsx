@@ -13,7 +13,7 @@ type Message = {
 };
 
 export default function ChatRoom({ route, navigation }: any) {
-  const { chatId, customerName } = route.params;
+  const { chatId, customerName, role } = route.params;
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -116,14 +116,43 @@ export default function ChatRoom({ route, navigation }: any) {
       style={styles.container} 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#191919" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{customerName}</Text>
+        
+        <View style={styles.titleContainer}>
+          <Text style={styles.headerTitle}>{customerName}</Text>
+          
+          {/* Profil-ikonen visas nu för BÅDA, men leder till olika sidor beroende på roll */}
+          <TouchableOpacity 
+            style={styles.profileBtn} 
+            onPress={() => {
+              if (role === 'creator') {
+                navigation.navigate('CustomerProfile', { 
+                  customerName: customerName, 
+                  chatId: chatId 
+                });
+              } else {
+                // Om kunden klickar: Utvinn företagets ID från chatId och gå till VendorProfile
+                const ids = chatId.split('_');
+                const vendorId = ids.find((id: string) => id !== currentUserId);
+                
+                navigation.navigate('VendorProfile', { 
+                  vendorId: vendorId 
+                });
+              }
+            }}
+          >
+            <Ionicons name="person-circle-outline" size={22} color="#1D3979" />
+          </TouchableOpacity>
+        </View>
+
         <View style={{ width: 34 }} /> {/* Skapar balans i headern */}
       </View>
 
+      {/* CHATT-LISTA */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#1D3979" />
@@ -140,6 +169,7 @@ export default function ChatRoom({ route, navigation }: any) {
         />
       )}
 
+      {/* TEXT-INPUT */}
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.textInput}
@@ -158,6 +188,7 @@ export default function ChatRoom({ route, navigation }: any) {
           <Ionicons name="send" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
+
     </KeyboardAvoidingView>
   );
 }
@@ -177,7 +208,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
   },
   backBtn: { padding: 5 },
+  titleContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919' },
+  profileBtn: { padding: 2 },
   chatContainer: { padding: 20, paddingBottom: 40 },
   messageBubble: { maxWidth: '80%', padding: 12, borderRadius: 16, marginBottom: 12 },
   myMessage: { alignSelf: 'flex-end', backgroundColor: '#1D3979', borderBottomRightRadius: 4 },
