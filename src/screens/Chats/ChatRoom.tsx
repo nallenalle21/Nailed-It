@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {  Modal, Alert } from 'react-native';
 import { 
   View, 
   StyleSheet, 
@@ -27,11 +28,13 @@ export default function ChatRoom({ route, navigation }: any) {
   // You should pass this from ChatsCreator.tsx: navigation.navigate('ChatRoom', { chatId: '123', customerName: '...' })
   const chatId = route?.params?.chatId || 'test-chat-id';
   const customerName = route?.params?.customerName || 'Customer';
-
+  const userRole = route?.params?.role || 'creator'; // Läs av om det är 'user' eller 'creator'
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bookingModalVisible, setBookingModalVisible] = useState(false);
+  const [selectedBookingTime, setSelectedBookingTime] = useState('');
   
   const flatListRef = useRef<FlatList>(null);
 
@@ -121,12 +124,11 @@ export default function ChatRoom({ route, navigation }: any) {
 };
 
   const handleOpenCalendar = () => {
-    // Navigate directly to your calendar creator screen
-    // Pass the chatId or customer details so the calendar knows who the booking is for
-    navigation.navigate('CalendarCreator', { 
-      chatId,
-      customerName
-    });
+    if (userRole === 'creator') {
+      navigation.navigate('CalendarCreator', { chatId, customerName });
+    } else {
+      navigation.navigate('UserCalendarPicker', { chatId, creatorName: customerName });
+    }
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -140,7 +142,17 @@ export default function ChatRoom({ route, navigation }: any) {
         </Text>
         
         {item.is_booking_request && (
-          <TouchableOpacity style={styles.acceptButton}>
+          <TouchableOpacity 
+            style={styles.acceptButton}
+            onPress={() => {
+              if (userRole === 'creator') {
+                setSelectedBookingTime(item.text); // Sparar tiden som står i meddelandet
+                setBookingModalVisible(true);
+              } else {
+                Alert.alert('Bokning', 'Väntar på svar från företaget...');
+              }
+            }}
+          >
             <Text style={styles.acceptButtonText}>View Booking</Text>
           </TouchableOpacity>
         )}
@@ -205,6 +217,72 @@ export default function ChatRoom({ route, navigation }: any) {
           <Ionicons name="send" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      {/* HÄR LIGGER MODALEN (POPUP-RUTAN) */}
+      <Modal visible={bookingModalVisible} transparent={true} animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Hantera Bokning</Text>
+            <Text style={styles.modalText}>{selectedBookingTime}</Text>
+            <View style={styles.modalButtons}>
+              {/* NEKA-KNAPPEN */}
+              <TouchableOpacity 
+                style={[styles.modalBtn, { backgroundColor: 'red' }]} 
+                onPress={async () => {
+                  // 1. Spara i bookings-tabellen som nekad
+                  await supabase.from('bookings').insert({
+                    chat_id: chatId,
+                    requested_time: selectedBookingTime,
+                    status: 'declined'
+                  });
+
+                  // 2. Skicka ett automatiskt chattmeddelande till kunden
+                  await supabase.from('messages').insert({
+                    chat_id: chatId,
+                    sender_id: currentUserId,
+                    text: `❌ Din bokningsförfrågan för ${selectedBookingTime.replace('📅 Bokningsförfrågan:\n', '')} kunde tyvärr inte godkännas.`,
+                    is_booking_request: false
+                  });
+
+                  // 3. Stäng modalen och ge feedback
+                  setBookingModalVisible(false);
+                  Alert.alert('Bokning Nekad', 'Kunden har meddelats i chatten.');
+                }}
+              >
+                <Text style={styles.modalBtnText}>Neka</Text>
+              </TouchableOpacity>
+              
+              {/* ACCEPTERA-KNAPPEN */}
+              <TouchableOpacity 
+                style={[styles.modalBtn, { backgroundColor: 'green' }]} 
+                onPress={async () => {
+                  // 1. Spara i bookings-tabellen
+                  await supabase.from('bookings').insert({
+                    chat_id: chatId,
+                    requested_time: selectedBookingTime,
+                    status: 'accepted'
+                  });
+
+                  // 2. Skicka ett automatiskt chattmeddelande till kunden
+                  await supabase.from('messages').insert({
+                    chat_id: chatId,
+                    sender_id: currentUserId,
+                    text: `✅ Din bokning för ${selectedBookingTime.replace('📅 Bokningsförfrågan:\n', '')} är nu bekräftad! Välkommen!`,
+                    is_booking_request: false
+                  });
+
+                  // 3. Stäng modalen och ge feedback
+                  setBookingModalVisible(false);
+                  Alert.alert('Bokning Accepterad', 'Kunden har meddelats i chatten.');
+                }}
+              >
+                <Text style={styles.modalBtnText}>Acceptera</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      
     </KeyboardAvoidingView>
   );
 }
@@ -257,4 +335,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', marginLeft: 10,
   },
   sendBtnDisabled: { backgroundColor: '#A0AABF' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#fff', padding: 20, borderRadius: 12, width: '80%', alignItems: 'center' },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
+  modalText: { fontSize: 15, marginBottom: 20, textAlign: 'center' },
+  modalButtons: { flexDirection: 'row', gap: 15 },
+  modalBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
+  modalBtnText: { color: '#fff', fontWeight: 'bold' },
 });
