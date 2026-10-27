@@ -24,7 +24,6 @@ import ProfileCreator from './src/screens/Profile/ProfileCreator';
 import BusinessCreator from './src/screens/Profile/BusinessCreator';
 import ServicesAndPrices from './src/screens/Profile/Business/ServicesAndPrices';
 
-import UserCalendarPicker from './src/screens/Chats/UserCalendarPicker';
 import ExploreUser from './src/screens/Explore/ExploreUser';
 import VendorDirectory from './src/screens/Explore/VendorDirectory';
 import VendorProfile from './src/screens/Explore/VendorProfile';
@@ -146,7 +145,6 @@ export default function App() {
               <Stack.Screen name="CustomerProfile" component={CustomerProfile} />
               <Stack.Screen name="CalendarCreator" component={CalendarCreator} options={{ headerShown: false }} />
               <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
-              <Stack.Screen name="UserCalendarPicker" component={UserCalendarPicker} options={{ headerShown: false }} />
             </Stack.Group>
           ) : (
             <Stack.Group>
@@ -156,13 +154,6 @@ export default function App() {
               <Stack.Screen 
                 name="ChatRoom" 
                 component={ChatRoom} 
-                options={{ headerShown: false }} 
-              />
-              
-              {/* ADD THE CALENDAR PICKER HERE TOO */}
-              <Stack.Screen 
-                name="UserCalendarPicker" 
-                component={UserCalendarPicker} 
                 options={{ headerShown: false }} 
               />
 

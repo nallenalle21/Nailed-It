@@ -15,20 +15,26 @@ export default function ChatsUser({ navigation }: any) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Hämta meddelanden som kunden skickat eller tagit emot
+    // Hämta meddelanden för denna användare
     const { data, error } = await supabase
       .from('messages')
       .select('*')
+      .like('chat_id', `%${user.id}%`) // Hämtar bara chattar där din inloggade användare är med
       .order('created_at', { ascending: false });
 
     if (data) {
-      // Filtrera fram unika chattrum för just denna användare i JavaScript
-      // (Ett enklare sätt att göra det på innan du bygger en dedikerad "chats"-tabell)
+      // 1. Filtrera fram unika chattrum
       const uniqueChats = data.reduce((acc: any[], message) => {
         if (!acc.find(c => c.id === message.chat_id)) {
+          
+          // Eftersom vi bygger chat_id som "id1_id2", kan vi dela på det för att hitta den andra personen
+          const ids = message.chat_id.split('_');
+          const otherUserId = ids.find((id: string) => id !== user.id) || message.sender_id;
+
           acc.push({
             id: message.chat_id,
-            creatorName: 'Företag', // Låtsasnamn tills vi kopplar profiler
+            otherUserId: otherUserId, // Spara den andra personens ID
+            creatorName: 'Laddar...', // Platshållare medan vi hämtar namnet
             lastMessage: message.text,
             time: new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             unread: false
@@ -37,6 +43,23 @@ export default function ChatsUser({ navigation }: any) {
         return acc;
       }, []);
       
+      // 2. Slå upp `username` för varje chatt i din profiles-tabell
+      for (let chat of uniqueChats) {
+        if (chat.otherUserId) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('username') // Hämtar username från din databas
+            .eq('id', chat.otherUserId)
+            .single();
+            
+          if (profile && profile.username) {
+            chat.creatorName = profile.username;
+          } else {
+            chat.creatorName = "Okänd användare";
+          }
+        }
+      }
+
       setChats(uniqueChats);
     }
     setLoading(false);
