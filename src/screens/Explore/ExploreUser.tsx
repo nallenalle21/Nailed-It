@@ -19,6 +19,7 @@ import {
   StyleSheet,
   Animated,
   LayoutChangeEvent,
+  ViewInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -150,7 +151,7 @@ export default function ExploreUser({ navigation }: any) {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Where the overlay container sits in the window + its size
-  const overlayRef = useRef<View>(null);
+  const overlayRef = useRef<ViewInstance>(null);
   const offsetRef = useRef<Point>({ x: 0, y: 0 });
   const sizeRef = useRef({ w: 390, h: 800 });
 
