@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
+import { View, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { supabase } from '../../services/supabase';
 
 export default function LoginScreen() {

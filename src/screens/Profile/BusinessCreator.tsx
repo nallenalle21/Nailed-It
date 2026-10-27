@@ -1,5 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
+
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function BusinessCreator({ navigation }: any) {
@@ -22,7 +24,7 @@ export default function BusinessCreator({ navigation }: any) {
       </View>
 
       <Text style={styles.sectionDescription}>
-        Hantera dina tjänster, priser, certifikat och din bokföring här.
+        Manage your services, prices, certificates, and bookkeeping here.
       </Text>
       
       <View style={styles.menuContainer}>

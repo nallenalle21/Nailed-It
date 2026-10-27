@@ -1,1 +1,2 @@
-import { View, Text } from 'react-native'; export default function WishlistCreator() { return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Wishlist Page</Text></View>; }
+import WishlistScreen from './WishlistScreen';
+export default WishlistScreen;

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Text } from '../../components/AppText';   // in src/components use './AppText'
+
+import { View, Image, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { supabase } from '../../services/supabase';
 
 export default function ProfileUser({ navigation }: any) {

@@ -1,32 +1,50 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, TextInput } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, TextInput, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+// Adjust the path below if your supabase.ts is located elsewhere:
+import { supabase } from '../../../services/supabase';
 
-// 1. Här är den nya TypeScript-regeln som fixar felet:
 type Certificate = {
   id: string;
   title: string;
   date: string;
-  uri: string | null;
+  image_url: string | null;
 };
 
 export default function Certificates({ navigation }: any) {
-  // 2. Här talar vi om att listan använder <Certificate[]>
-  const [certificates, setCertificates] = useState<Certificate[]>([
-    { id: '1', title: 'Certified Nail Technician', date: '2023-05-12', uri: null },
-    { id: '2', title: 'Hygiene & Safety Course', date: '2024-01-20', uri: null },
-  ]);
+  const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
   const [newCertName, setNewCertName] = useState('');
 
+  // 1. Fetch saved certificates from Supabase when the screen loads
+  useEffect(() => {
+    fetchCertificates();
+  }, []);
+
+  const fetchCertificates = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('certificates')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      Alert.alert("Error fetching data", error.message);
+    } else if (data) {
+      setCertificates(data);
+    }
+    setLoading(false);
+  };
+
   const handleUpload = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (permissionResult.granted === false) {
-      Alert.alert("Tillåtelse krävs", "Appen behöver åtkomst till dina bilder för att ladda upp certifikat.");
+      Alert.alert("Permission required", "The app needs access to your photos to upload certificates.");
       return;
     }
 
@@ -43,31 +61,58 @@ export default function Certificates({ navigation }: any) {
     }
   };
 
-  const handleSaveCertificate = () => {
+  // 2. Save the new certificate to the Supabase table
+  const handleSaveCertificate = async () => {
     if (!newCertName.trim()) {
-      Alert.alert("Namn saknas", "Vänligen ge ditt certifikat ett namn.");
+      Alert.alert("Missing name", "Please enter a name for your certificate.");
       return;
     }
 
-    const newCert: Certificate = {
-      id: Date.now().toString(),
-      title: newCertName, 
-      date: new Date().toISOString().split('T')[0],
-      uri: pendingImageUri
-    };
-    
-    setCertificates([newCert, ...certificates]);
-    setIsModalVisible(false); 
-    setPendingImageUri(null); 
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data, error } = await supabase
+      .from('certificates')
+      .insert([
+        {
+          title: newCertName,
+          date: today,
+          image_url: pendingImageUri,
+        }
+      ])
+      .select();
+
+    if (error) {
+      Alert.alert("Could not save", error.message);
+      return;
+    }
+
+    if (data) {
+      // Add the newly created certificate from the database to the top of the list
+      setCertificates([data[0], ...certificates]);
+      setIsModalVisible(false);
+      setPendingImageUri(null);
+    }
   };
 
+  // 3. Delete the certificate from Supabase
   const handleDelete = (id: string, title: string) => {
-    Alert.alert("Radera", `Är du säker på att du vill ta bort ${title}?`, [
-      { text: "Avbryt", style: "cancel" },
+    Alert.alert("Delete", `Are you sure you want to delete ${title}?`, [
+      { text: "Cancel", style: "cancel" },
       { 
-        text: "Radera", 
+        text: "Delete", 
         style: "destructive",
-        onPress: () => setCertificates(certificates.filter(cert => cert.id !== id)) 
+        onPress: async () => {
+          const { error } = await supabase
+            .from('certificates')
+            .delete()
+            .eq('id', id);
+
+          if (error) {
+            Alert.alert("Error deleting", error.message);
+          } else {
+            setCertificates(certificates.filter(cert => cert.id !== id));
+          }
+        }
       }
     ]);
   };
@@ -84,52 +129,57 @@ export default function Certificates({ navigation }: any) {
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionDescription}>
-          Ladda upp bevis på dina utbildningar, licenser och certifikat för att bygga förtroende hos dina kunder.
+          Upload proof of your education, licenses, and certificates to build trust with your clients.
         </Text>
 
         <TouchableOpacity style={styles.uploadBox} onPress={handleUpload}>
           <View style={styles.uploadIconCircle}>
             <Ionicons name="cloud-upload-outline" size={32} color="#1D3979" />
           </View>
-          <Text style={styles.uploadTitle}>Ladda upp nytt certifikat</Text>
-          <Text style={styles.uploadSubtitle}>Tryck här för att välja fil eller ta en bild</Text>
+          <Text style={styles.uploadTitle}>Upload new certificate</Text>
+          <Text style={styles.uploadSubtitle}>Tap here to choose a file or take a photo</Text>
         </TouchableOpacity>
 
-        <Text style={styles.sectionTitle}>Dina sparade certifikat</Text>
+        <Text style={styles.sectionTitle}>Your saved certificates</Text>
 
-        {certificates.map((cert) => (
-          <View key={cert.id} style={styles.certCard}>
-            {cert.uri ? (
-              <Image source={{ uri: cert.uri }} style={styles.certIconImage} />
-            ) : (
-              <View style={styles.certIcon}>
-                <Ionicons name="ribbon-outline" size={24} color="#1D3979" />
+        {loading ? (
+          <ActivityIndicator size="large" color="#1D3979" style={{ marginTop: 20 }} />
+        ) : certificates.length === 0 ? (
+          <Text style={styles.emptyText}>No certificates uploaded yet.</Text>
+        ) : (
+          certificates.map((cert) => (
+            <View key={cert.id} style={styles.certCard}>
+              {cert.image_url ? (
+                <Image source={{ uri: cert.image_url }} style={styles.certIconImage} />
+              ) : (
+                <View style={styles.certIcon}>
+                  <Ionicons name="ribbon-outline" size={24} color="#1D3979" />
+                </View>
+              )}
+              
+              <View style={styles.certInfo}>
+                <Text style={styles.certTitle}>{cert.title}</Text>
+                <Text style={styles.certDate}>Uploaded: {cert.date}</Text>
               </View>
-            )}
-            
-            <View style={styles.certInfo}>
-              <Text style={styles.certTitle}>{cert.title}</Text>
-              <Text style={styles.certDate}>Uppladdad: {cert.date}</Text>
+              <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(cert.id, cert.title)}>
+                <Ionicons name="trash-outline" size={20} color="#BF0F46" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(cert.id, cert.title)}>
-              <Ionicons name="trash-outline" size={20} color="#BF0F46" />
-            </TouchableOpacity>
-          </View>
-        ))}
+          ))
+        )}
 
         <View style={{ height: 50 }} />
       </ScrollView>
 
-      {/* Modal för att namnge certifikatet */}
       <Modal visible={isModalVisible} transparent={true} animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Namnge Certifikat</Text>
-            <Text style={styles.modalSubtitle}>Vad vill du att dina kunder ska se för namn på detta intyg?</Text>
+            <Text style={styles.modalTitle}>Name Certificate</Text>
+            <Text style={styles.modalSubtitle}>What name would you like your clients to see for this certificate?</Text>
             
             <TextInput 
               style={styles.modalInput} 
-              placeholder="T.ex. Kosmetisk Tatuering Diplom" 
+              placeholder="e.g. Certified Nail Technician" 
               value={newCertName} 
               onChangeText={setNewCertName}
               placeholderTextColor="#716C83"
@@ -138,10 +188,10 @@ export default function Certificates({ navigation }: any) {
 
             <View style={styles.modalButtons}>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsModalVisible(false)}>
-                <Text style={styles.cancelBtnText}>Avbryt</Text>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.saveBtn} onPress={handleSaveCertificate}>
-                <Text style={styles.saveBtnText}>Spara</Text>
+                <Text style={styles.saveBtnText}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -158,14 +208,12 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#191919' },
   content: { paddingHorizontal: 20 },
   sectionDescription: { fontSize: 14, color: '#716C83', marginBottom: 25 },
-  
   uploadBox: { backgroundColor: '#F0F4FF', borderWidth: 2, borderColor: '#1D3979', borderStyle: 'dashed', borderRadius: 16, padding: 30, alignItems: 'center', marginBottom: 40 },
   uploadIconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginBottom: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   uploadTitle: { fontSize: 16, fontWeight: 'bold', color: '#1D3979', marginBottom: 5 },
   uploadSubtitle: { fontSize: 13, color: '#716C83' },
-
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919', marginBottom: 15 },
-  
+  emptyText: { fontSize: 14, color: '#716C83', fontStyle: 'italic', marginTop: 10 },
   certCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
   certIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F9F9F9', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   certIconImage: { width: 44, height: 44, borderRadius: 22, marginRight: 15 }, 
@@ -173,8 +221,6 @@ const styles = StyleSheet.create({
   certTitle: { fontSize: 16, fontWeight: 'bold', color: '#191919', marginBottom: 4 },
   certDate: { fontSize: 12, color: '#716C83' },
   deleteBtn: { padding: 8 },
-
-  /* Stilar för namngivnings-rutan (Modal) */
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919', marginBottom: 8 },

@@ -23,7 +23,7 @@ export default function Bookkeeping({ navigation }: any) {
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionDescription}>
-          Håll koll på dina intäkter och din bokföring.
+          Keep track of your revenue and your bookkeeping.
         </Text>
 
         {/* Integration Status Card */}
@@ -42,14 +42,14 @@ export default function Bookkeeping({ navigation }: any) {
             </View>
           </View>
           <Text style={styles.integrationBody}>
-            Dina genomförda tjänster och betalningar synkas automatiskt till din bokföring.
+            Your completed services and payments are automatically synced to your bookkeeping.
           </Text>
           <TouchableOpacity style={styles.settingsBtn}>
-            <Text style={styles.settingsBtnText}>Hantera anslutning</Text>
+            <Text style={styles.settingsBtnText}>Connection settings</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionTitle}>Tidigare Tjänster & Betalningar</Text>
+        <Text style={styles.sectionTitle}>Past Services & Payments</Text>
 
         {/* Transaktionslista */}
         <View style={styles.transactionsContainer}>

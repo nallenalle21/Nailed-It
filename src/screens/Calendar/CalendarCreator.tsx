@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { colors } from '../../theme';
+import { Text } from '../../components/AppText';
 import {
   View,
-  Text,
   TouchableOpacity,
   ScrollView,
   Modal,
@@ -587,12 +588,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     padding: 18,
     borderRadius: 14,
-    backgroundColor: '#fff1ee',
+    backgroundColor: colors.primarySoft,
   },
   nextUpLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'tomato',
+    color: colors.danger,
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
@@ -629,11 +630,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
-  todayCircle: { borderColor: 'tomato' },
-  selectedCircle: { backgroundColor: 'tomato', borderColor: 'tomato' },
+  todayCircle: { borderColor: colors.primary },
+  selectedCircle: { backgroundColor: colors.primary, borderColor: colors.primary },
   dayText: { fontSize: 16, color: '#222' },
-  todayText: { color: 'tomato', fontWeight: '700' },
-  selectedText: { color: '#fff', fontWeight: '700' },
+  todayText: { color: colors.text, fontWeight: '700' },
+  selectedText: { color: colors.primarySoft, fontWeight: '700' },
   slotsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -656,7 +657,7 @@ const styles = StyleSheet.create({
     padding: 14,
     paddingRight: 52,
     borderRadius: 10,
-    backgroundColor: '#f4f4f4',
+    backgroundColor: '#f0ece5',
   },
   bookedSlot: { backgroundColor: '#eaf6ee' },
   slotText: { fontSize: 16, fontWeight: '600' },
@@ -673,6 +674,7 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -704,7 +706,7 @@ const styles = StyleSheet.create({
   },
   cancel: { fontSize: 16, color: '#666' },
   saveButton: {
-    backgroundColor: 'tomato',
+    backgroundColor: colors.danger,
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 8,
