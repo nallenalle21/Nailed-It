@@ -5,6 +5,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabase';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
+import BookingModal from '../../components/BookingModal';
+import CreatorPopup from '../../components/CreatorPopup';
+import { fetchCreatorsAvailableOn, toDateKey } from '../../services/booking';
 import { getSavedTargetIds } from '../../services/wishlist';
 import {
   View,
@@ -43,25 +46,18 @@ const PRICE_RANGES = [
   { label: '800+ kr', min: 801, max: Infinity },
 ];
 
-type Tech = {
-  id: string;
-  name: string;
-  area: string;
-  lat: number;
-  lng: number;
-  services: string[];
-  price: number; // starting price in SEK
-};
+type MapCreator = { id: string; name: string };
 
-// Placeholder data, replace with real data later
-const TECHS: Tech[] = [
-  { id: '1', name: 'Nail Studio Kalle', area: 'Södermalm', lat: 59.3138, lng: 18.0710, services: ['Gel nails', 'Manicure'], price: 450 },
-  { id: '2', name: 'Lova Nails', area: 'Vasastan', lat: 59.3425, lng: 18.0490, services: ['Advanced nail art', 'Gel nails'], price: 750 },
-  { id: '3', name: 'Glow by Ines', area: 'Östermalm', lat: 59.3380, lng: 18.0890, services: ['Simple nail art', 'Manicure', 'Pedicure'], price: 400 },
-  { id: '4', name: 'Studio Leif', area: 'Kungsholmen', lat: 59.3330, lng: 18.0270, services: ['Acrylic nails', 'Advanced nail art'], price: 900 },
-  { id: '5', name: 'Aly & co', area: 'Gamla stan', lat: 59.3250, lng: 18.0710, services: ['Manicure', 'Pedicure', 'Gel nails'], price: 550 },
-  { id: '6', name: 'I <3 Nails', area: 'Hornstull', lat: 59.3160, lng: 18.0340, services: ['Simple nail art', 'Gel nails'], price: 480 },
-];
+// Creators do not store coordinates yet, so each pin gets a stable spot near central
+// Stockholm derived from the creator id. Replace with real work-location coordinates.
+function demoCoordinate(id: string) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return {
+    latitude: STOCKHOLM.latitude + (((h % 1000) / 1000) - 0.5) * 0.08,
+    longitude: STOCKHOLM.longitude + ((((h >>> 10) % 1000) / 1000) - 0.5) * 0.1,
+  };
+}
 
 const STOCKHOLM = {
   latitude: 59.3293,
@@ -71,7 +67,7 @@ const STOCKHOLM = {
 };
 
 // The Explore feed uses the actual posts uploaded to Supabase by creators.
-// Map TECHS above are still placeholders until work locations are integrated.
+// Creators without coordinates get placeholder pins (see demoCoordinate).
 type InspoItem = {
   id: string;
   vendorId: string;
@@ -129,6 +125,11 @@ export default function ExploreUser({ navigation }: any) {
   const [feedError, setFeedError] = useState<string | null>(null);
   const [feedWarning, setFeedWarning] = useState<string | null>(null);
   const [feedRefresh, setFeedRefresh] = useState(0);
+  const [creators, setCreators] = useState<MapCreator[]>([]);
+  // null = no date filter (or still loading); otherwise creators with free time on the chosen date
+  const [availableIds, setAvailableIds] = useState<Set<string> | null>(null);
+  const [popupCreator, setPopupCreator] = useState<MapCreator | null>(null);
+  const [bookingCreator, setBookingCreator] = useState<MapCreator | null>(null);
 
   const [query, setQuery] = useState('');
   const [service, setService] = useState<string | null>(null);
@@ -189,6 +190,7 @@ export default function ExploreUser({ navigation }: any) {
 
         const creators = (creatorsResult.data ?? []) as { id: string; username: string | null }[];
         const nameById = new Map(creators.map(p => [p.id, p.username?.trim() || 'Unnamed creator']));
+        if (active) setCreators(creators.map(p => ({ id: p.id, name: nameById.get(p.id)! })));
         const allPosts: VendorPost[] = [];
 
         for (let from = 0; ; from += POSTS_PAGE_SIZE) {
@@ -305,27 +307,8 @@ export default function ExploreUser({ navigation }: any) {
     }
   }, [inspoPosts, goToProfile]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const range = PRICE_RANGES[priceIdx];
-    return TECHS.filter((t) => {
-      if (service && !t.services.includes(service)) return false;
-      if (t.price < range.min || t.price > range.max) return false;
-      if (
-        q &&
-        !(
-          t.name.toLowerCase().includes(q) ||
-          t.area.toLowerCase().includes(q) ||
-          t.services.some((s) => s.toLowerCase().includes(q))
-        )
-      )
-        return false;
-      return true;
-    });
-  }, [query, service, priceIdx]);
-
   // The masonry feed is based on real images; prices/services come from that
-  // creator's own services. Date availability and geography are not connected yet.
+  // creator's own services.
   const servicesByVendor = useMemo(() => {
     const byVendor = new Map<string, OfferedService[]>();
     for (const item of offeredServices) {
@@ -337,31 +320,55 @@ export default function ExploreUser({ navigation }: any) {
     return byVendor;
   }, [offeredServices]);
 
-  const filteredPosts = useMemo(() => {
+  const matchesFilters = useCallback((vendorId: string, name: string, caption = '') => {
     const q = query.trim().toLowerCase();
     const selectedService = service?.toLowerCase();
     const range = PRICE_RANGES[priceIdx];
-    return inspoPosts.filter(post => {
-      const offered = servicesByVendor.get(post.vendorId) ?? [];
-      if (q && !(
-        post.creatorName.toLowerCase().includes(q) ||
-        post.caption.toLowerCase().includes(q) ||
-        offered.some(s => s.name.toLowerCase().includes(q) || (s.category || '').toLowerCase().includes(q))
-      )) return false;
+    const offered = servicesByVendor.get(vendorId) ?? [];
+    if (q && !(
+      name.toLowerCase().includes(q) ||
+      caption.toLowerCase().includes(q) ||
+      offered.some(s => s.name.toLowerCase().includes(q) || (s.category || '').toLowerCase().includes(q))
+    )) return false;
 
-      if (selectedService && !offered.some(s =>
-        s.name.toLowerCase().includes(selectedService) ||
-        (s.category || '').toLowerCase().includes(selectedService)
-      )) return false;
+    if (selectedService && !offered.some(s =>
+      s.name.toLowerCase().includes(selectedService) ||
+      (s.category || '').toLowerCase().includes(selectedService)
+    )) return false;
 
-      if (priceIdx !== 0 && !offered.some(s => {
-        const price = Number(s.discount_price ?? s.price);
-        return Number.isFinite(price) && price >= range.min && price <= range.max;
-      })) return false;
+    if (priceIdx !== 0 && !offered.some(s => {
+      const price = Number(s.discount_price ?? s.price);
+      return Number.isFinite(price) && price >= range.min && price <= range.max;
+    })) return false;
 
-      return true;
-    });
-  }, [inspoPosts, servicesByVendor, query, service, priceIdx]);
+    if (date && (!availableIds || !availableIds.has(vendorId))) return false;
+    return true;
+  }, [servicesByVendor, query, service, priceIdx, date, availableIds]);
+
+  // Creators with free time on the chosen date (the server accounts for existing bookings).
+  const dateKey = date ? toDateKey(date) : null;
+  useEffect(() => {
+    if (!dateKey) {
+      setAvailableIds(null);
+      return;
+    }
+    let active = true;
+    setAvailableIds(null);
+    fetchCreatorsAvailableOn(dateKey)
+      .then(ids => active && setAvailableIds(ids))
+      .catch(() => active && setAvailableIds(new Set()));
+    return () => { active = false; };
+  }, [dateKey, feedRefresh]);
+
+  const filtered = useMemo(
+    () => creators.filter(c => matchesFilters(c.id, c.name)),
+    [creators, matchesFilters],
+  );
+
+  const filteredPosts = useMemo(
+    () => inspoPosts.filter(post => matchesFilters(post.vendorId, post.creatorName, post.caption)),
+    [inspoPosts, matchesFilters],
+  );
 
   const hasFilters = service || priceIdx !== 0 || date || query;
   const clearAll = () => {
@@ -496,32 +503,31 @@ export default function ExploreUser({ navigation }: any) {
 
           {/* PART 2: map */}
           <View style={styles.mapHeader}>
-            <Text style={styles.sectionTitle}>Sample studios in Stockholm</Text>
+            <Text style={styles.sectionTitle}>Nail techs in Stockholm</Text>
             <Text style={styles.count}>{filtered.length} found</Text>
           </View>
           <View style={styles.mapWrap}>
             <MapView style={styles.map} initialRegion={STOCKHOLM}>
-              {filtered.map((t) => (
+              {filtered.map((c) => (
                 <Marker
-                  key={t.id}
-                  coordinate={{ latitude: t.lat, longitude: t.lng }}
-                  title={t.name}
-                  description={`${t.area} · from ${t.price} kr`}
+                  key={c.id}
+                  coordinate={demoCoordinate(c.id)}
+                  title={c.name}
                   pinColor={colors.primary}
+                  onPress={() => setPopupCreator(c)}
                 />
               ))}
             </MapView>
           </View>
 
           {/* PART 3: real artwork feed */}
-          <Text style={styles.demoMapNote}>Map pins are demonstration data, not actual creator addresses.</Text>
+          <Text style={styles.demoMapNote}>Map pin positions are placeholders until creators add their location.</Text>
           <View style={styles.feedHeading}>
             <Text style={styles.sectionTitle}>get inspired</Text>
             <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
               <Ionicons name="refresh" size={21} color={colors.primary} />
             </TouchableOpacity>
           </View>
-          {date && <Text style={styles.feedNotice}>Date-based photo filtering will be available once booking availability is connected.</Text>}
           {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
           {feedError ? (
             <View style={styles.feedStatus}>
@@ -647,6 +653,24 @@ export default function ExploreUser({ navigation }: any) {
           />
         )
       )}
+      <CreatorPopup
+        creator={bookingCreator ? null : popupCreator}
+        onClose={() => setPopupCreator(null)}
+        onViewProfile={(id) => { setPopupCreator(null); goToProfile(id); }}
+        onBook={(c) => setBookingCreator(c)}
+      />
+      <BookingModal
+        visible={bookingCreator !== null}
+        creator={bookingCreator}
+        initialDate={dateKey}
+        onClose={() => { setBookingCreator(null); setPopupCreator(null); }}
+        onBooked={() => {
+          setBookingCreator(null);
+          setPopupCreator(null);
+          setFeedRefresh(n => n + 1);
+          showToast('Appointment booked! See it in your calendar');
+        }}
+      />
       <SaveToBoardModal
         visible={saveTarget !== null}
         kind="post"

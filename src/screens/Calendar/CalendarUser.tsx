@@ -1,37 +1,25 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors } from '../../theme';
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import {
   View,
   TouchableOpacity,
   ScrollView,
-  Modal,
-  TextInput,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-
-type Slot = { start: string; end: string; service: string };
+import { fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-const DEFAULT_SLOTS: Slot[] = [
-  { start: '13:00', end: '15:00', service: 'Manicure' },
-  { start: '15:00', end: '17:00', service: 'Manicure' },
-];
-const TIME_REGEX = /^([01]?\d|2[0-3]):[0-5]\d$/;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const dateKey = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
-const normalize = (t: string) => {
-  const [h, m] = t.split(':');
-  return `${pad(Number(h))}:${m}`;
-};
 const shortLabel = (key: string) => {
   const [, m, d] = key.split('-');
   return `${Number(d)} ${MONTHS[Number(m) - 1].slice(0, 3)}`;
@@ -40,8 +28,9 @@ const longLabel = (key: string) => {
   const [, m, d] = key.split('-');
   return `${Number(d)} ${MONTHS[Number(m) - 1]}`;
 };
+const hhmm = (t: string) => t.slice(0, 5);
 
-export default function CalendarCreator() {
+export default function CalendarUser() {
   const today = new Date();
   const todayKey = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
   const nowTime = `${pad(today.getHours())}:${pad(today.getMinutes())}`;
@@ -49,43 +38,29 @@ export default function CalendarCreator() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selected, setSelected] = useState(todayKey);
-  // Days that have been changed. Days not in here use DEFAULT_SLOTS.
-  const [slotsByDate, setSlotsByDate] = useState<Record<string, Slot[]>>({});
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [startInput, setStartInput] = useState('');
-  const [endInput, setEndInput] = useState('');
-  const [serviceInput, setServiceInput] = useState('');
-  const [error, setError] = useState('');
+  // Reload on focus so a freshly confirmed booking shows up.
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    fetchMyAppointments('customer')
+      .then((rows) => {
+        if (!active) return;
+        setAppointments(rows);
+        setLoadError('');
+      })
+      .catch((e) => active && setLoadError(e instanceof Error ? e.message : String(e?.message ?? e)))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, []));
 
-  const getSlots = (key: string): Slot[] =>
-    [...(slotsByDate[key] ?? DEFAULT_SLOTS)].sort((a, b) =>
-      a.start.localeCompare(b.start)
-    );
-
-  const updateDay = (key: string, fn: (slots: Slot[]) => Slot[]) => {
-    setSlotsByDate((prev) => ({
-      ...prev,
-      [key]: fn(prev[key] ?? DEFAULT_SLOTS),
-    }));
-  };
-
-  // Find the closest upcoming booking (looks 120 days ahead + any edited days)
-  const findNextUp = (): { key: string; slot: Slot } | null => {
-    const keys = new Set<string>(Object.keys(slotsByDate));
-    for (let i = 0; i < 120; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-      keys.add(dateKey(d.getFullYear(), d.getMonth(), d.getDate()));
-    }
-    const sortedKeys = [...keys].filter((k) => k >= todayKey).sort();
-    for (const key of sortedKeys) {
-      for (const slot of getSlots(key)) {
-        if (key > todayKey || slot.start > nowTime) return { key, slot };
-      }
-    }
-    return null;
-  };
-  const nextUp = findNextUp();
+  const nextUp =
+    appointments
+      .filter((a) => a.appointment_date > todayKey || (a.appointment_date === todayKey && hhmm(a.start_time) > nowTime))
+      .sort((a, b) => a.appointment_date.localeCompare(b.appointment_date) || a.start_time.localeCompare(b.start_time))[0] ?? null;
+  const daySlots = appointments.filter((a) => a.appointment_date === selected);
 
   // Month grid (weeks start on Monday)
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -102,65 +77,12 @@ export default function CalendarCreator() {
     setMonth(d.getMonth());
   };
 
-  const openModal = () => {
-    setStartInput('');
-    setEndInput('');
-    setServiceInput('');
-    setError('');
-    setModalVisible(true);
-  };
-
-  const saveSlot = () => {
-    if (!TIME_REGEX.test(startInput) || !TIME_REGEX.test(endInput)) {
-      setError('Use the format HH:MM, e.g. 09:00');
-      return;
-    }
-    const slot: Slot = {
-      start: normalize(startInput),
-      end: normalize(endInput),
-      service: serviceInput.trim() || 'Booking',
-    };
-    if (slot.start >= slot.end) {
-      setError('End time must be after start time');
-      return;
-    }
-    if (getSlots(selected).some((s) => s.start === slot.start && s.end === slot.end)) {
-      setError('That timeslot already exists');
-      return;
-    }
-    updateDay(selected, (slots) => [...slots, slot]);
-    setModalVisible(false);
-  };
-
-  const confirmRemove = (slot: Slot) => {
-    Alert.alert(
-      'Remove booking',
-      `${longLabel(selected)}, ${slot.start}–${slot.end}\n${slot.service}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () =>
-            updateDay(selected, (slots) =>
-              slots.filter((s) => !(s.start === slot.start && s.end === slot.end))
-            ),
-        },
-      ]
-    );
-  };
-
-  const daySlots = getSlots(selected);
-
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header with + button */}
       <View style={styles.header}>
         <View style={{ width: 28 }} />
         <Text style={styles.title}>Calendar</Text>
-        <TouchableOpacity onPress={openModal} hitSlop={10}>
-          <Ionicons name="add" size={28} color= {colors.danger} />
-        </TouchableOpacity>
+        <View style={{ width: 28 }} />
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
@@ -169,7 +91,7 @@ export default function CalendarCreator() {
           <Text style={styles.nextUpLabel}>Next Up</Text>
           <Text style={styles.nextUpText}>
             {nextUp
-              ? `${shortLabel(nextUp.key)} ${nextUp.slot.start}–${nextUp.slot.end}, ${nextUp.slot.service}`
+              ? `${shortLabel(nextUp.appointment_date)} ${hhmm(nextUp.start_time)}–${hhmm(nextUp.end_time)}, ${nextUp.creator_name}`
               : 'No upcoming bookings'}
           </Text>
         </View>
@@ -232,76 +154,28 @@ export default function CalendarCreator() {
           <Text style={styles.slotsTitle}>my bookings · {longLabel(selected)}</Text>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
-          {daySlots.length === 0 && (
-            <Text style={styles.empty}>hey babe, no bookings this day. Tap + to add one.</Text>
+          {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
+          {daySlots.length === 0 && !loadError && (
+            <Text style={styles.empty}>
+              {loading ? 'Loading your bookings...' : 'No bookings this day. Find a creator in Explore to book one.'}
+            </Text>
           )}
-          {daySlots.map((slot) => (
-            <View key={`${slot.start}-${slot.end}`} style={styles.slotWrap}>
+          {daySlots.map((a) => (
+            <View key={a.id} style={styles.slotWrap}>
               <View style={styles.slot}>
                 <Ionicons name="time-outline" size={18} color="#555" />
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.slotText}>
-                    {slot.start} – {slot.end}
+                    {hhmm(a.start_time)} – {hhmm(a.end_time)} · {a.creator_name}
                   </Text>
-                  <Text style={styles.slotService}>{slot.service}</Text>
+                  <Text style={styles.slotService}>{a.services.map((s) => s.name).join(', ')}</Text>
+                  <Text style={styles.slotService}>{a.total_minutes} min · {formatKr(a.total_price)}</Text>
                 </View>
               </View>
-              <TouchableOpacity
-                style={styles.minus}
-                onPress={() => confirmRemove(slot)}
-                hitSlop={8}
-              >
-                <Ionicons name="remove" size={16} color="#fff" />
-              </TouchableOpacity>
             </View>
           ))}
         </View>
       </ScrollView>
-
-      {/* Add booking modal */}
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>New booking · {longLabel(selected)}</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Start (e.g. 09:00)"
-              value={startInput}
-              onChangeText={setStartInput}
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="End (e.g. 11:00)"
-              value={endInput}
-              onChangeText={setEndInput}
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Service (e.g. Pedicure)"
-              value={serviceInput}
-              onChangeText={setServiceInput}
-            />
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <View style={styles.modalButtons}>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={styles.cancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveButton} onPress={saveSlot}>
-                <Text style={styles.saveText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

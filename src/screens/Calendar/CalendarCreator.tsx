@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors } from '../../theme';
 import { Text } from '../../components/AppText';
 import {
@@ -13,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
 
 type Slot = { id: string; date: string; start: string; end: string; service: string };
 type BookedSlot = Slot & { customer: string };
@@ -93,20 +95,17 @@ export default function CalendarCreator() {
   const [creatorId, setCreatorId] = useState<string | null>(null);
   const [availableSlots, setAvailableSlots] = useState<Slot[]>([]);
   const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(true);
   const [slotsLoadError, setSlotsLoadError] = useState('');
 
   const [modalVisible, setModalVisible] = useState(false);
-  const [bookingModalVisible, setBookingModalVisible] = useState(false);
   const [startInput, setStartInput] = useState('');
   const [endInput, setEndInput] = useState('');
-  const [serviceInput, setServiceInput] = useState('');
   const [error, setError] = useState('');
-  const [customerInput, setCustomerInput] = useState('');
-  const [bookingError, setBookingError] = useState('');
-  const [slotToBook, setSlotToBook] = useState<Slot | null>(null);
 
-  useEffect(() => {
+  // Reload on focus so appointments booked by customers show up.
+  useFocusEffect(useCallback(() => {
     let isMounted = true;
 
     const loadCreatorSlots = async () => {
@@ -115,14 +114,23 @@ export default function CalendarCreator() {
         if (authError) throw authError;
         if (!user) throw new Error('No signed-in creator was found.');
 
-        const { data, error } = await supabase
-          .from('creator_slots')
-          .select(SLOT_COLUMNS)
-          .eq('creator_id', user.id)
-          .order('slot_date')
-          .order('start_time');
+        const [{ data, error }, appointmentRows] = await Promise.all([
+          supabase
+            .from('creator_slots')
+            .select(SLOT_COLUMNS)
+            .eq('creator_id', user.id)
+            .order('slot_date')
+            .order('start_time'),
+          // A missing appointments table must not stop the availability calendar from loading.
+          fetchMyAppointments('creator').catch((e) => {
+            console.warn('[Calendar] Could not load appointments:', e);
+            return [] as Appointment[];
+          }),
+        ]);
         if (error) throw error;
         if (!isMounted) return;
+
+        setAppointments(appointmentRows);
 
         const rows = (data ?? []) as CreatorSlotRow[];
         setCreatorId(user.id);
@@ -148,7 +156,7 @@ export default function CalendarCreator() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, []));
 
   const getAvailableSlots = (key: string): Slot[] =>
     availableSlots
@@ -160,11 +168,21 @@ export default function CalendarCreator() {
       .sort((a, b) => a.start.localeCompare(b.start));
 
   // Find the next future appointment; availability alone is not a booking.
-  const findNextUp = (): BookedSlot | null =>
-    bookedSlots
+  type Upcoming = { date: string; start: string; end: string; label: string };
+  const upcoming: Upcoming[] = [
+    ...bookedSlots.map((s) => ({ date: s.date, start: s.start, end: s.end, label: `${s.service} · ${s.customer}` })),
+    ...appointments.map((a) => ({
+      date: a.appointment_date,
+      start: a.start_time.slice(0, 5),
+      end: a.end_time.slice(0, 5),
+      label: `${a.services.map((s) => s.name).join(', ')} · ${a.customer_name}`,
+    })),
+  ];
+  const nextUp: Upcoming | null =
+    upcoming
       .filter((slot) => slot.date > todayKey || (slot.date === todayKey && slot.start > nowTime))
       .sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start))[0] ?? null;
-  const nextUp = findNextUp();
+  const appointmentsForDay = appointments.filter((a) => a.appointment_date === selected);
 
   // Month grid (weeks start on Monday)
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -184,16 +202,8 @@ export default function CalendarCreator() {
   const openModal = () => {
     setStartInput('');
     setEndInput('');
-    setServiceInput('');
     setError('');
     setModalVisible(true);
-  };
-
-  const openBookingModal = (slot: Slot) => {
-    setSlotToBook(slot);
-    setCustomerInput('');
-    setBookingError('');
-    setBookingModalVisible(true);
   };
 
   const saveSlot = async () => {
@@ -205,7 +215,7 @@ export default function CalendarCreator() {
       date: selected,
       start: normalize(startInput),
       end: normalize(endInput),
-      service: serviceInput.trim() || 'Booking',
+      service: 'Available',
     };
     if (slot.start >= slot.end) {
       setError('End time must be after start time');
@@ -239,37 +249,6 @@ export default function CalendarCreator() {
 
     setAvailableSlots((slots) => [...slots, toCalendarSlot(data as CreatorSlotRow) as Slot]);
     setModalVisible(false);
-  };
-
-  const saveBooking = async () => {
-    const customer = customerInput.trim();
-    if (!customer) {
-      setBookingError('Enter the customer name');
-      return;
-    }
-    if (!slotToBook) return;
-    if (!creatorId) {
-      setBookingError('The creator calendar is not ready. Try again shortly.');
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from('creator_slots')
-      .update({ status: 'booked', customer_name: customer })
-      .eq('id', slotToBook.id)
-      .eq('creator_id', creatorId)
-      .eq('status', 'available')
-      .select(SLOT_COLUMNS)
-      .single();
-    if (error) {
-      setBookingError(getErrorMessage(error, 'Could not book this slot.'));
-      return;
-    }
-
-    const bookedSlot = toCalendarSlot(data as CreatorSlotRow) as BookedSlot;
-    setBookedSlots((slots) => [...slots, bookedSlot]);
-    setAvailableSlots((slots) => slots.filter((slot) => slot.id !== bookedSlot.id));
-    setBookingModalVisible(false);
   };
 
   const confirmRemoveAvailable = (slot: Slot) => {
@@ -357,16 +336,6 @@ export default function CalendarCreator() {
           </View>
         </View>
         <View style={styles.slotActions}>
-          {!isBooked && (
-            <TouchableOpacity
-              style={[styles.slotAction, styles.bookAction]}
-              onPress={() => openBookingModal(slot)}
-              hitSlop={8}
-              accessibilityLabel="Book this slot"
-            >
-              <Ionicons name="person-add-outline" size={14} color="#fff" />
-            </TouchableOpacity>
-          )}
           <TouchableOpacity
             style={[styles.slotAction, styles.removeAction]}
             onPress={() =>
@@ -402,7 +371,7 @@ export default function CalendarCreator() {
           <Text style={styles.nextUpLabel}>Next Booking</Text>
           <Text style={styles.nextUpText}>
             {nextUp
-              ? `${shortLabel(nextUp.date)} ${nextUp.start}–${nextUp.end}, ${nextUp.service} · ${nextUp.customer}`
+              ? `${shortLabel(nextUp.date)} ${nextUp.start}–${nextUp.end}, ${nextUp.label}`
               : 'You have no upcoming booked appointments.'}
           </Text>
         </View>
@@ -481,11 +450,27 @@ export default function CalendarCreator() {
           <Text style={styles.slotsTitle}>Booked · {longLabel(selected)}</Text>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
-          {bookedForDay.length === 0 && (
+          {bookedForDay.length === 0 && appointmentsForDay.length === 0 && (
             <Text style={styles.empty}>
               {slotsLoading ? 'Loading creator calendar...' : 'No booked appointments this day.'}
             </Text>
           )}
+          {appointmentsForDay.map((a) => (
+            <View key={a.id} style={styles.slotWrap}>
+              <View style={[styles.slot, styles.bookedSlot]}>
+                <Ionicons name="calendar-outline" size={18} color="#27834A" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.slotText}>
+                    {a.start_time.slice(0, 5)} – {a.end_time.slice(0, 5)}
+                  </Text>
+                  <Text style={styles.slotService}>{a.services.map((s) => s.name).join(', ')}</Text>
+                  <Text style={styles.slotCustomer}>
+                    {a.customer_name} · {a.total_minutes} min · {formatKr(a.total_price)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ))}
           {bookedForDay.map(renderSlot)}
         </View>
       </ScrollView>
@@ -516,12 +501,6 @@ export default function CalendarCreator() {
               keyboardType="numbers-and-punctuation"
               maxLength={5}
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Service (e.g. Pedicure)"
-              value={serviceInput}
-              onChangeText={setServiceInput}
-            />
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <View style={styles.modalButtons}>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
@@ -529,40 +508,6 @@ export default function CalendarCreator() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.saveButton} onPress={saveSlot}>
                 <Text style={styles.saveText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={bookingModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setBookingModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Book appointment</Text>
-            {slotToBook && (
-              <Text style={styles.bookingDetails}>
-                {longLabel(slotToBook.date)} · {slotToBook.start}–{slotToBook.end} · {slotToBook.service}
-              </Text>
-            )}
-            <TextInput
-              style={styles.input}
-              placeholder="Customer name"
-              value={customerInput}
-              onChangeText={setCustomerInput}
-              autoCapitalize="words"
-            />
-            {bookingError ? <Text style={styles.error}>{bookingError}</Text> : null}
-            <View style={styles.modalButtons}>
-              <TouchableOpacity onPress={() => setBookingModalVisible(false)}>
-                <Text style={styles.cancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveButton} onPress={saveBooking}>
-                <Text style={styles.saveText}>Book</Text>
               </TouchableOpacity>
             </View>
           </View>

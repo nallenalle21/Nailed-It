@@ -1,7 +1,7 @@
 /**
  * Public customer view of a creator, opened with route.params.vendorId.
  * Real data: public username, services, submitted certificates.
- * Favorites are saved in Supabase; reviews and booking are still prototypes.
+ * Favorites are saved in Supabase; reviews are still a prototype. Booking uses BookingModal.
  * IMPORTANT: The current certificates table has no verification status.
  * Never label submitted certificates as verified until backend approval exists.
  */
@@ -24,6 +24,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
+import BookingModal from '../../components/BookingModal';
 import { getMembership, getSavedTargetIds } from '../../services/wishlist';
 
 type Vendor = { id: string; username: string | null; role: string };
@@ -86,6 +87,7 @@ export default function VendorProfile({ navigation, route }: any) {
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [expandedPost, setExpandedPost] = useState<PostPreview | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [bookingOpen, setBookingOpen] = useState(false);
 
   // Refetch whenever this screen gains focus, including after a creator uploads a photo.
   useFocusEffect(useCallback(() => {
@@ -191,15 +193,6 @@ export default function VendorProfile({ navigation, route }: any) {
 
   const displayName = vendor?.username?.trim() || 'Unnamed creator';
   const initial = displayName.slice(0, 1).toUpperCase();
-
-  const handleBook = () => {
-    Alert.alert(
-      'Booking coming next',
-      'The booking calendar is being developed separately. This button will later open the booking flow for this creator.'
-    );
-    // Future integration:
-    // navigation.navigate('VendorBooking', { vendorId });
-  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -321,10 +314,10 @@ export default function VendorProfile({ navigation, route }: any) {
               <Text style={styles.bookingTitle}>Book an appointment</Text>
             </View>
             <Text style={styles.bookingText}>
-              Browse the creator's services. Time-slot selection and booking confirmation will be
-              connected when the booking module is ready.
+              Choose a date, start time and the services you want. The total time and price are
+              checked before you confirm.
             </Text>
-            <TouchableOpacity accessibilityRole="button" onPress={handleBook} style={styles.bookButton}>
+            <TouchableOpacity accessibilityRole="button" onPress={() => setBookingOpen(true)} style={styles.bookButton}>
               <Text style={styles.bookButtonText}>Book</Text>
               <Ionicons name="arrow-forward" size={18} color={theme.white} />
             </TouchableOpacity>
@@ -429,6 +422,15 @@ export default function VendorProfile({ navigation, route }: any) {
           </View>
         </View>
       </Modal>
+      <BookingModal
+        visible={bookingOpen && !!vendorId}
+        creator={vendorId ? { id: vendorId, name: displayName } : null}
+        onClose={() => setBookingOpen(false)}
+        onBooked={() => {
+          setBookingOpen(false);
+          Alert.alert('Appointment booked', 'You can find it in your Calendar.');
+        }}
+      />
       <SaveToBoardModal
         visible={saveProfileOpen}
         kind="vendor"
