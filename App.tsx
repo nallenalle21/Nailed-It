@@ -84,7 +84,7 @@ function UserTabs() {
       tabBarActiveTintColor: '#716c13', tabBarInactiveTintColor: '#151a17',
     })}>
       <Tab.Screen name="Explore" component={ExploreUser} />
-      <Tab.Screen name="Vendors" component={VendorsStack} />
+      <Tab.Screen name="Vendors" component={VendorsStack} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' } }} />
       <Tab.Screen name="Wishlist" component={WishlistUser} />
       <Tab.Screen name="Calendar" component={CalendarUser} />
       <Tab.Screen name="Chats" component={ChatsUser} />

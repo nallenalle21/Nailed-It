@@ -149,7 +149,8 @@ export default function ChatRoom({ route, navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        <View style={{ width: 34 }} /> {/* Skapar balans i headern */}
+        {/* Skapar balans i headern */}
+        <View style={{ width: 34 }} />
       </View>
 
       {/* CHATT-LISTA */}
