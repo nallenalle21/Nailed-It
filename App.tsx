@@ -8,6 +8,9 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from './src/services/supabase';
 
+import ChatRoom from './src/screens/Chats/ChatRoom';
+import CustomerProfile from './src/screens/Chats/ChatCustomerProfile';
+
 import WorkLocations from './src/screens/Profile/Business/WorkLocations';
 import LoginScreen from './src/screens/Login/LoginScreen';
 import Certificates from './src/screens/Profile/Business/Certificates';
@@ -139,10 +142,24 @@ export default function App() {
               <Stack.Screen name="WorkLocations" component={WorkLocations} />
               <Stack.Screen name="Certificates" component={Certificates} />
               <Stack.Screen name="Bookkeeping" component={Bookkeeping} />
+              <Stack.Screen name="CustomerProfile" component={CustomerProfile} />
+              <Stack.Screen name="CalendarCreator" component={CalendarCreator} options={{ headerShown: false }} />
+              <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
+              <Stack.Screen name="VendorProfile" component={VendorProfile} options={{ headerShown: false }} />
             </Stack.Group>
           ) : (
             <Stack.Group>
               <Stack.Screen name="UserTabs" component={UserTabs} />
+              <Stack.Screen
+                name="ChatRoom"
+                component={ChatRoom}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="VendorProfile"
+                component={VendorProfile}
+                options={{ headerShown: false }}
+              />
             </Stack.Group>
           )}
         </Stack.Navigator>

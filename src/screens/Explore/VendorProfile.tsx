@@ -194,6 +194,26 @@ export default function VendorProfile({ navigation, route }: any) {
   const displayName = vendor?.username?.trim() || 'Unnamed creator';
   const initial = displayName.slice(0, 1).toUpperCase();
 
+  const handleContactVendor = async () => {
+    if (!vendorId) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      Alert.alert('Inte inloggad', 'Du måste vara inloggad för att skicka meddelanden.');
+      return;
+    }
+
+    // Skapa ett unikt chattrums-ID
+    const chatId = [user.id, vendorId].sort().join('_');
+
+    // Navigera till chattrummet och skicka med kreatörens namn
+    navigation.navigate('ChatRoom', {
+      chatId: chatId,
+      customerName: displayName,
+      role: 'user'
+    });
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.toolbar}>
@@ -250,15 +270,33 @@ export default function VendorProfile({ navigation, route }: any) {
             </View>
             <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.creatorLabel}>Creative professional · Nailed-It</Text>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel={isSaved ? 'Manage saved profile boards' : 'Save creator to a board'}
-              style={styles.favoriteButton}
-              onPress={() => setSaveProfileOpen(true)}
-            >
-              <Ionicons name={isSaved ? 'heart' : 'heart-outline'} size={18} color={theme.accent} />
-              <Text style={styles.favoriteText}>{isSaved ? 'Saved · manage boards' : 'Save creator'}</Text>
-            </TouchableOpacity>
+
+            {/* KNAPP-BEHÅLLAREN */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18, justifyContent: 'center', flexWrap: 'wrap' }}>
+
+              {/* SPARA-KNAPPEN */}
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={isSaved ? 'Manage saved profile boards' : 'Save creator to a board'}
+                style={styles.favoriteButton}
+                onPress={() => setSaveProfileOpen(true)}
+              >
+                <Ionicons name={isSaved ? 'heart' : 'heart-outline'} size={18} color={theme.accent} />
+                <Text style={styles.favoriteText}>{isSaved ? 'Saved' : 'Save creator'}</Text>
+              </TouchableOpacity>
+
+              {/* CHATT-KNAPPEN */}
+              <TouchableOpacity
+                accessibilityRole="button"
+                style={styles.chatButton}
+                onPress={handleContactVendor}
+              >
+                <Ionicons name="chatbubble-outline" size={18} color={theme.white} />
+                <Text style={styles.chatButtonText}>Message</Text>
+              </TouchableOpacity>
+
+            </View>
+
             <Text style={styles.prototypeNote}>Save this creator to your named wishlist boards.</Text>
           </View>
 
@@ -463,8 +501,10 @@ const styles = StyleSheet.create({
   profileInitial: { fontWeight: '700', fontSize: 41, color: theme.accent },
   name: { color: theme.ink, fontWeight: '800', fontSize: 28 },
   creatorLabel: { fontSize: 13, color: theme.muted, marginTop: 7 },
-  favoriteButton: { flexDirection: 'row', gap: 7, alignItems: 'center', borderWidth: 1, borderColor: '#DEC2CE', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, marginTop: 18 },
+  favoriteButton: { flexDirection: 'row', gap: 7, alignItems: 'center', borderWidth: 1, borderColor: '#DEC2CE', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10 },
   favoriteText: { color: theme.accent, fontWeight: '700', fontSize: 13 },
+  chatButton: { flexDirection: 'row', gap: 7, alignItems: 'center', backgroundColor: theme.accent, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10 },
+  chatButtonText: { color: theme.white, fontWeight: '700', fontSize: 13 },
   prototypeNote: { fontSize: 11, color: theme.muted, marginTop: 9 },
   warning: { marginHorizontal: 20, backgroundColor: '#FFF0F2', borderRadius: 12, flexDirection: 'row', gap: 10, padding: 13, marginBottom: 20 },
   warningHeading: { color: '#903749', fontSize: 13, fontWeight: '700' },
