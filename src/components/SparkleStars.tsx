@@ -28,7 +28,13 @@ export type SparkleStarsHandle = {
  * pops a star with sparkles where a finger touched. Never blocks touches. Pass active={false}
  * to pause it (e.g. when the screen isn't focused). Respects the OS "Reduce Motion" setting.
  */
-const SparkleStars = forwardRef<SparkleStarsHandle, { active?: boolean }>(function SparkleStars({ active = true }, ref) {
+type SparkleStarsProps = {
+  active?: boolean;
+  /** Random shooting stars falling across the screen (default on). Tap stars work either way. */
+  shootingStars?: boolean;
+};
+
+const SparkleStars = forwardRef<SparkleStarsHandle, SparkleStarsProps>(function SparkleStars({ active = true, shootingStars = true }, ref) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const layer = useRef<React.ComponentRef<typeof View>>(null);
   const origin = useRef({ x: 0, y: 0 }); // layer's position on screen, to convert touch coordinates
@@ -39,7 +45,7 @@ const SparkleStars = forwardRef<SparkleStarsHandle, { active?: boolean }>(functi
 
   // Every once in a while: a shooting star, mostly top-right → bottom-left, sometimes mirrored.
   useEffect(() => {
-    if (!active || reduceMotion || !size.width) return;
+    if (!active || !shootingStars || reduceMotion || !size.width) return;
     let timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
       timer = setTimeout(() => {
@@ -57,7 +63,7 @@ const SparkleStars = forwardRef<SparkleStarsHandle, { active?: boolean }>(functi
     };
     schedule();
     return () => clearTimeout(timer);
-  }, [active, reduceMotion, size]);
+  }, [active, shootingStars, reduceMotion, size]);
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion).catch(() => {});

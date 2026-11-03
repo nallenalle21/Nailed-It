@@ -6,6 +6,7 @@ import { handle } from '../../utils/handle';
 import { View, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { Text } from '../../components/AppText';
 import { supabase } from '../../services/supabase';
+import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 
 export default function ChatsUser({ navigation }: any) {
   // Pull down to refresh: spinning star instead of the system spinner.
@@ -52,6 +53,8 @@ export default function ChatsUser({ navigation }: any) {
       // 2. Slå upp `username` för varje chatt i din profiles-tabell
       for (let chat of uniqueChats) {
         if (chat.otherUserId) {
+          // Their real profile picture (same storage as the profile pages); null → initial circle.
+          chat.avatarUrl = await getVendorAvatarUrl(chat.otherUserId).catch(() => null);
           const { data: profile } = await supabase
             .from('profiles')
             .select('username') // Hämtar username från din databas
@@ -79,7 +82,13 @@ export default function ChatsUser({ navigation }: any) {
 
   const renderItem = ({ item }: any) => (
     <TouchableOpacity style={styles.chatItem} onPress={() => handlePressChat(item.id, item.creatorName)}>
-      <Image source={{ uri: 'https://via.placeholder.com/50' }} style={styles.avatar} />
+      {item.avatarUrl ? (
+        <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+      ) : (
+        <View style={[styles.avatar, styles.avatarFallback]}>
+          <Text style={styles.avatarInitial}>{(item.creatorName || '?').replace('@', '').charAt(0).toUpperCase()}</Text>
+        </View>
+      )}
       <View style={styles.chatInfo}>
         <View style={styles.chatHeader}>
           <Text style={[styles.name, item.unread && styles.unreadText]}>{handle(item.creatorName)}</Text>
@@ -118,6 +127,8 @@ const styles = StyleSheet.create({
   listContainer: { paddingHorizontal: 20 },
   chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line },
   avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15, backgroundColor: colors.line },
+  avatarFallback: { backgroundColor: colors.pink, alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { color: colors.wine, fontSize: 20, fontWeight: '700' },
   chatInfo: { flex: 1, justifyContent: 'center' },
   chatHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
   name: { fontSize: 16, fontWeight: '500' },
