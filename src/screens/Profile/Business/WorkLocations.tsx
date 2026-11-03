@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Alert, ActivityIndicator } from 'react-native';
+import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
+import StarredTitle from '../../../components/StarredTitle';
+import { colors, fonts } from '../../../theme';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, Alert, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../services/supabase'; // Adjust path if needed
 
 export default function WorkLocations({ navigation }: any) {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchLocations());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [locationId, setLocationId] = useState<string | null>(null);
@@ -93,16 +98,16 @@ export default function WorkLocations({ navigation }: any) {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#191919" />
+          <Ionicons name="arrow-back" size={24} color={colors.ink} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Work Locations</Text>
+        <StarredTitle style={styles.headerTitle}>Work Locations</StarredTitle>
         <View style={{ width: 24 }} />
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#1D3979" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color={colors.blue} style={{ marginTop: 40 }} />
       ) : (
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView refreshControl={<RefreshControl {...pull.control} />} style={styles.content} showsVerticalScrollIndicator={false}>
           <Text style={styles.sectionDescription}>
             Choose where you offer your services. You can combine multiple options to maximize your bookings.
           </Text>
@@ -111,13 +116,13 @@ export default function WorkLocations({ navigation }: any) {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={styles.titleRow}>
-                <Ionicons name="business-outline" size={22} color="#1D3979" style={{ marginRight: 10 }} />
+                <Ionicons name="business-outline" size={22} color={colors.blue} style={{ marginRight: 10 }} />
                 <Text style={styles.cardTitle}>Salon / Studio</Text>
               </View>
               <Switch
                 value={studioEnabled}
                 onValueChange={setStudioEnabled}
-                trackColor={{ false: '#e0e0e0', true: '#1D3979' }}
+                trackColor={{ false: colors.line, true: colors.blue }}
               />
             </View>
             <Text style={styles.cardSubtitle}>Clients visit you at your fixed address.</Text>
@@ -130,7 +135,7 @@ export default function WorkLocations({ navigation }: any) {
                   placeholder="e.g. Drottninggatan 12, Stockholm"
                   value={studioAddress}
                   onChangeText={setStudioAddress}
-                  placeholderTextColor="#716C83"
+                  placeholderTextColor={colors.inkMuted}
                 />
               </View>
             )}
@@ -140,13 +145,13 @@ export default function WorkLocations({ navigation }: any) {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={styles.titleRow}>
-                <Ionicons name="car-outline" size={22} color="#1D3979" style={{ marginRight: 10 }} />
+                <Ionicons name="car-outline" size={22} color={colors.blue} style={{ marginRight: 10 }} />
                 <Text style={styles.cardTitle}>Home Visits</Text>
               </View>
               <Switch
                 value={homeEnabled}
                 onValueChange={setHomeEnabled}
-                trackColor={{ false: '#e0e0e0', true: '#1D3979' }}
+                trackColor={{ false: colors.line, true: colors.blue }}
               />
             </View>
             <Text style={styles.cardSubtitle}>You travel to the client's home.</Text>
@@ -159,7 +164,7 @@ export default function WorkLocations({ navigation }: any) {
                   placeholder="e.g. 15 km"
                   value={homeRadius}
                   onChangeText={setHomeRadius}
-                  placeholderTextColor="#716C83"
+                  placeholderTextColor={colors.inkMuted}
                 />
                 <Text style={styles.label}>Travel Fee (SEK)</Text>
                 <TextInput
@@ -168,7 +173,7 @@ export default function WorkLocations({ navigation }: any) {
                   keyboardType="numeric"
                   value={homeFee}
                   onChangeText={setHomeFee}
-                  placeholderTextColor="#716C83"
+                  placeholderTextColor={colors.inkMuted}
                 />
               </View>
             )}
@@ -178,13 +183,13 @@ export default function WorkLocations({ navigation }: any) {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={styles.titleRow}>
-                <Ionicons name="sparkles-outline" size={22} color="#1D3979" style={{ marginRight: 10 }} />
+                <Ionicons name="sparkles-outline" size={22} color={colors.blue} style={{ marginRight: 10 }} />
                 <Text style={styles.cardTitle}>Events & Parties</Text>
               </View>
               <Switch
                 value={eventEnabled}
                 onValueChange={setEventEnabled}
-                trackColor={{ false: '#e0e0e0', true: '#1D3979' }}
+                trackColor={{ false: colors.line, true: colors.blue }}
               />
             </View>
             <Text style={styles.cardSubtitle}>Available for weddings, bachelorette parties, or corporate events.</Text>
@@ -198,7 +203,7 @@ export default function WorkLocations({ navigation }: any) {
                   multiline
                   value={eventTerms}
                   onChangeText={setEventTerms}
-                  placeholderTextColor="#716C83"
+                  placeholderTextColor={colors.inkMuted}
                 />
               </View>
             )}
@@ -211,25 +216,26 @@ export default function WorkLocations({ navigation }: any) {
           <View style={{ height: 50 }} />
         </ScrollView>
       )}
+      <RefreshStar refreshing={pull.refreshing} y={130} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F9F9' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 60, marginBottom: 10, paddingHorizontal: 20 },
   backBtn: { padding: 5 },
-  headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#191919' },
+  headerTitle: { fontSize: 22, color: colors.ink, fontFamily: fonts.title },
   content: { paddingHorizontal: 20 },
-  sectionDescription: { fontSize: 14, color: '#716C83', marginBottom: 20 },
-  card: { backgroundColor: '#fff', padding: 20, borderRadius: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
+  sectionDescription: { fontSize: 14, color: colors.inkMuted, marginBottom: 20 },
+  card: { backgroundColor: colors.background, padding: 20, borderRadius: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   titleRow: { flexDirection: 'row', alignItems: 'center' },
-  cardTitle: { fontSize: 17, fontWeight: 'bold', color: '#191919' },
-  cardSubtitle: { fontSize: 13, color: '#716C83' },
-  expandedContent: { marginTop: 15, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
-  label: { fontSize: 13, fontWeight: '600', color: '#191919', marginBottom: 6 },
-  input: { backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, padding: 12, fontSize: 15, color: '#191919', marginBottom: 12 },
-  saveBtn: { backgroundColor: '#1D3979', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
-  saveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 }
+  cardTitle: { fontSize: 17, color: colors.ink, fontFamily: fonts.title },
+  cardSubtitle: { fontSize: 13, color: colors.inkMuted },
+  expandedContent: { marginTop: 15, paddingTop: 15, borderTopWidth: 1, borderTopColor: colors.line },
+  label: { fontSize: 13, fontWeight: '600', color: colors.ink, marginBottom: 6 },
+  input: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 12, fontSize: 15, color: colors.ink, marginBottom: 12 },
+  saveBtn: { backgroundColor: colors.blue, padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
+  saveBtnText: { color: colors.background, fontWeight: 'bold', fontSize: 16 }
 });

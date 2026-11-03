@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { handle } from '../utils/handle';
 import { ActivityIndicator, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
@@ -38,10 +39,10 @@ export default function CreatorPopup({ creator, onClose, onViewProfile, onBook }
         <TouchableOpacity activeOpacity={1} style={styles.card}>
           <View style={styles.row}>
             <View style={styles.avatar}>
-              <Ionicons name="person" size={26} color="#fff" />
+              <Ionicons name="person" size={26} color={colors.wine} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.name} numberOfLines={1}>{creator?.name}</Text>
+              <Text style={styles.name} numberOfLines={1}>{handle(creator?.name)}</Text>
               {lowest !== null && <Text style={styles.from}>from {formatKr(lowest)}</Text>}
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={10} accessibilityLabel="Close">
@@ -50,7 +51,7 @@ export default function CreatorPopup({ creator, onClose, onViewProfile, onBook }
           </View>
 
           {loading ? (
-            <ActivityIndicator style={{ marginVertical: 16 }} color={colors.danger} />
+            <ActivityIndicator style={{ marginVertical: 16 }} color={colors.wine} />
           ) : services.length === 0 ? (
             <Text style={styles.empty}>No services listed yet.</Text>
           ) : (
@@ -81,9 +82,9 @@ export default function CreatorPopup({ creator, onClose, onViewProfile, onBook }
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  card: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36 },
+  card: { backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.pink, alignItems: 'center', justifyContent: 'center' },
   name: { fontSize: 18, fontWeight: '700' },
   from: { fontSize: 14, color: '#888', marginTop: 2 },
   services: { marginTop: 14, gap: 8 },
@@ -92,8 +93,8 @@ const styles = StyleSheet.create({
   servicePrice: { fontSize: 14, fontWeight: '700' },
   empty: { color: '#888', fontSize: 13, marginTop: 12 },
   buttons: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  secondary: { flex: 1, borderRadius: 12, borderWidth: 1, borderColor: colors.danger, paddingVertical: 13, alignItems: 'center' },
-  secondaryText: { color: colors.danger, fontWeight: '700', fontSize: 15 },
-  primary: { flex: 1.4, borderRadius: 12, backgroundColor: colors.danger, paddingVertical: 13, alignItems: 'center' },
-  primaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  secondary: { flex: 1, borderRadius: 12, borderWidth: 1, borderColor: colors.wine, paddingVertical: 13, alignItems: 'center' },
+  secondaryText: { color: colors.wine, fontWeight: '700', fontSize: 15 },
+  primary: { flex: 1.4, borderRadius: 12, backgroundColor: colors.wine, paddingVertical: 13, alignItems: 'center' },
+  primaryText: { color: colors.pink, fontWeight: '700', fontSize: 15 },
 });

@@ -3,6 +3,8 @@
  * Replace the tab entry with navigation from Explore / Saved posts later.
  */
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
+import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
+import { handle } from '../../utils/handle';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -10,6 +12,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +30,8 @@ const theme = {
 };
 
 export default function VendorDirectory({ navigation }: any) {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,14 +54,15 @@ export default function VendorDirectory({ navigation }: any) {
       setVendors((data ?? []) as Vendor[]);
       setError(requestError?.message ?? null);
       setLoading(false);
+      pull.doneLoading();
     })();
 
     return () => { current = false; };
-  }, [refreshKey]);
+  }, [refreshKey, pull.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={styles.content}>
         <View style={styles.eyebrowRow}>
           <Ionicons name="flask-outline" size={16} color={theme.accent} />
           <Text style={styles.eyebrow}>DEVELOPMENT PREVIEW</Text>
@@ -101,7 +107,7 @@ export default function VendorDirectory({ navigation }: any) {
                   <View style={styles.avatar}>
                     <Ionicons name="person-outline" size={18} color={theme.accent} />
                   </View>
-                  <Text style={styles.vendorName}>{vendor.username?.trim() || 'Unnamed creator'}</Text>
+                  <Text style={styles.vendorName}>{handle(vendor.username) || 'Unnamed creator'}</Text>
                   <Ionicons name="chevron-forward" size={18} color={theme.muted} />
                 </TouchableOpacity>
               ))
@@ -126,6 +132,7 @@ export default function VendorDirectory({ navigation }: any) {
           </Text>
         </View>
       </ScrollView>
+      <RefreshStar refreshing={pull.refreshing} y={120} />
     </SafeAreaView>
   );
 }

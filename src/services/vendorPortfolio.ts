@@ -87,6 +87,23 @@ export async function setVendorPostPinned(post: VendorPost, isPinned: boolean): 
   if (error) throw error;
 }
 
+/**
+ * Saves a custom portfolio order (first id = shown first). vendor_posts has no position
+ * column, and every view sorts newest-first, so each post gets a created_at one second apart
+ * in the wanted order. Pinning is retired, so is_pinned is cleared too.
+ * Side effect: reordered photos count as "new" in Explore's newest-first feed.
+ */
+export async function reorderVendorPosts(vendorId: string, orderedIds: string[]): Promise<void> {
+  const now = Date.now();
+  const results = await Promise.all(orderedIds.map((id, index) =>
+    supabase.from('vendor_posts')
+      .update({ created_at: new Date(now - index * 1000).toISOString(), is_pinned: false })
+      .eq('id', id)
+      .eq('vendor_id', vendorId)));
+  const failed = results.find(r => r.error);
+  if (failed?.error) throw failed.error;
+}
+
 /** Returns a warning if database deletion succeeded but Storage cleanup failed. */
 export async function deleteVendorPost(post: VendorPost): Promise<string | null> {
   const { error: dbError } = await supabase.from('vendor_posts')

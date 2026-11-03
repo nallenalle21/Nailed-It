@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
+import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
+import { handle } from '../../utils/handle';
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
 
-import { View, Image, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Image, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { supabase } from '../../services/supabase';
 
 export default function ProfileUser({ navigation }: any) {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchProfile());
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -38,13 +42,14 @@ export default function ProfileUser({ navigation }: any) {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <>
+    <ScrollView refreshControl={<RefreshControl {...pull.control} />} style={styles.container}>
       <View style={styles.header}>
         <Image 
           source={{ uri: 'https://via.placeholder.com/120' }} 
           style={styles.profilePic} 
         />
-        <Text style={styles.name}>{profile?.username || 'Anonym'}</Text>
+        <Text style={styles.name}>{handle(profile?.username) || 'Anonym'}</Text>
         <Text style={styles.subtitle}>{profile?.email}</Text>
       </View>
 
@@ -70,6 +75,8 @@ export default function ProfileUser({ navigation }: any) {
         <Text style={styles.signOutText}>Sign Out</Text>
       </TouchableOpacity>
     </ScrollView>
+      <RefreshStar refreshing={pull.refreshing} y={130} />
+    </>
   );
 }
 

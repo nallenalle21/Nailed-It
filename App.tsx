@@ -6,7 +6,9 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
 import { supabase } from './src/services/supabase';
+import { colors, fonts } from './src/theme';
 
 import ChatRoom from './src/screens/Chats/ChatRoom';
 import CustomerProfile from './src/screens/Chats/ChatCustomerProfile';
@@ -34,6 +36,13 @@ import ProfileUser from './src/screens/Profile/ProfileUser';
 
 
 const Tab = createBottomTabNavigator();
+
+// Bottom menu: HORIZON labels (small), black when selected, softer black otherwise.
+const TAB_BAR_STYLE = {
+  tabBarActiveTintColor: colors.ink,
+  tabBarInactiveTintColor: colors.inkMuted,
+  tabBarLabelStyle: { fontFamily: fonts.title, fontSize: 7 }, // "INSPIRATION" must fit one tab (~78pt wide)
+};
 const Stack = createNativeStackNavigator();
 
 const getIcon = (name: string, focused: boolean) => {
@@ -64,11 +73,11 @@ function CreatorTabs() {
     <Tab.Navigator screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-      tabBarActiveTintColor: '#716c13', tabBarInactiveTintColor: '#151a17',
+      ...TAB_BAR_STYLE,
     })}>
       <Tab.Screen name="Explore" component={ExploreCreator} />
       <Tab.Screen name="Vendors" component={VendorsStack} options={{tabBarButton: () => null, tabBarItemStyle: { display: 'none' },}}/>
-      <Tab.Screen name="Wishlist" component={WishlistCreator} />
+      <Tab.Screen name="Wishlist" component={WishlistCreator} options={{ tabBarLabel: 'Inspiration' }} />
       <Tab.Screen name="Calendar" component={CalendarCreator} />
       <Tab.Screen name="Chats" component={ChatsCreator} />
       <Tab.Screen name="Profile" component={ProfileCreator} />
@@ -81,11 +90,11 @@ function UserTabs() {
     <Tab.Navigator screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-      tabBarActiveTintColor: '#716c13', tabBarInactiveTintColor: '#151a17',
+      ...TAB_BAR_STYLE,
     })}>
       <Tab.Screen name="Explore" component={ExploreUser} />
       <Tab.Screen name="Vendors" component={VendorsStack} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' } }} />
-      <Tab.Screen name="Wishlist" component={WishlistUser} />
+      <Tab.Screen name="Wishlist" component={WishlistUser} options={{ tabBarLabel: 'Inspiration' }} />
       <Tab.Screen name="Calendar" component={CalendarUser} />
       <Tab.Screen name="Chats" component={ChatsUser} />
       <Tab.Screen name="Profile" component={ProfileUser} />
@@ -97,6 +106,9 @@ export default function App() {
   const [session, setSession] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fontsLoaded] = useFonts({
+    Horizon: require('./assets/fonts/Horizon.otf'),
+  });
 
   const fetchRole = async (userId: string) => {
     const { data } = await supabase.from('profiles').select('role').eq('id', userId).single();
@@ -118,7 +130,7 @@ export default function App() {
     });
   }, []);
 
-  if (loading) {
+  if (loading || !fontsLoaded) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={{ flex: 1, justifyContent: 'center' }}>

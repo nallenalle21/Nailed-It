@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, TextInput, ActivityIndicator } from 'react-native';
+import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
+import StarredTitle from '../../../components/StarredTitle';
+import { colors, fonts } from '../../../theme';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, TextInput, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 // Adjust the path below if your supabase.ts is located elsewhere:
@@ -13,6 +16,8 @@ type Certificate = {
 };
 
 export default function Certificates({ navigation }: any) {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchCertificates());
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -121,20 +126,20 @@ export default function Certificates({ navigation }: any) {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#191919" />
+          <Ionicons name="arrow-back" size={24} color={colors.ink} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Certificates</Text>
+        <StarredTitle style={styles.headerTitle}>Certificates</StarredTitle>
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView refreshControl={<RefreshControl {...pull.control} />} style={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionDescription}>
           Upload proof of your education, licenses, and certificates to build trust with your clients.
         </Text>
 
         <TouchableOpacity style={styles.uploadBox} onPress={handleUpload}>
           <View style={styles.uploadIconCircle}>
-            <Ionicons name="cloud-upload-outline" size={32} color="#1D3979" />
+            <Ionicons name="cloud-upload-outline" size={32} color={colors.blue} />
           </View>
           <Text style={styles.uploadTitle}>Upload new certificate</Text>
           <Text style={styles.uploadSubtitle}>Tap here to choose a file or take a photo</Text>
@@ -143,7 +148,7 @@ export default function Certificates({ navigation }: any) {
         <Text style={styles.sectionTitle}>Your saved certificates</Text>
 
         {loading ? (
-          <ActivityIndicator size="large" color="#1D3979" style={{ marginTop: 20 }} />
+          <ActivityIndicator size="large" color={colors.blue} style={{ marginTop: 20 }} />
         ) : certificates.length === 0 ? (
           <Text style={styles.emptyText}>No certificates uploaded yet.</Text>
         ) : (
@@ -153,7 +158,7 @@ export default function Certificates({ navigation }: any) {
                 <Image source={{ uri: cert.image_url }} style={styles.certIconImage} />
               ) : (
                 <View style={styles.certIcon}>
-                  <Ionicons name="ribbon-outline" size={24} color="#1D3979" />
+                  <Ionicons name="ribbon-outline" size={24} color={colors.blue} />
                 </View>
               )}
               
@@ -162,7 +167,7 @@ export default function Certificates({ navigation }: any) {
                 <Text style={styles.certDate}>Uploaded: {cert.date}</Text>
               </View>
               <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(cert.id, cert.title)}>
-                <Ionicons name="trash-outline" size={20} color="#BF0F46" />
+                <Ionicons name="trash-outline" size={20} color={colors.wine} />
               </TouchableOpacity>
             </View>
           ))
@@ -182,7 +187,7 @@ export default function Certificates({ navigation }: any) {
               placeholder="e.g. Certified Nail Technician" 
               value={newCertName} 
               onChangeText={setNewCertName}
-              placeholderTextColor="#716C83"
+              placeholderTextColor={colors.inkMuted}
               autoFocus
             />
 
@@ -197,38 +202,39 @@ export default function Certificates({ navigation }: any) {
           </View>
         </View>
       </Modal>
+      <RefreshStar refreshing={pull.refreshing} y={130} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F9F9' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 60, marginBottom: 10, paddingHorizontal: 20 },
   backBtn: { padding: 5 },
-  headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#191919' },
+  headerTitle: { fontSize: 22, color: colors.ink, fontFamily: fonts.title },
   content: { paddingHorizontal: 20 },
-  sectionDescription: { fontSize: 14, color: '#716C83', marginBottom: 25 },
-  uploadBox: { backgroundColor: '#F0F4FF', borderWidth: 2, borderColor: '#1D3979', borderStyle: 'dashed', borderRadius: 16, padding: 30, alignItems: 'center', marginBottom: 40 },
-  uploadIconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginBottom: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  uploadTitle: { fontSize: 16, fontWeight: 'bold', color: '#1D3979', marginBottom: 5 },
-  uploadSubtitle: { fontSize: 13, color: '#716C83' },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919', marginBottom: 15 },
-  emptyText: { fontSize: 14, color: '#716C83', fontStyle: 'italic', marginTop: 10 },
-  certCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
-  certIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F9F9F9', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  sectionDescription: { fontSize: 14, color: colors.inkMuted, marginBottom: 25 },
+  uploadBox: { backgroundColor: colors.blueTint, borderWidth: 2, borderColor: colors.blue, borderStyle: 'dashed', borderRadius: 16, padding: 30, alignItems: 'center', marginBottom: 40 },
+  uploadIconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', marginBottom: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
+  uploadTitle: { fontSize: 16, color: colors.ink, marginBottom: 5, fontFamily: fonts.title },
+  uploadSubtitle: { fontSize: 13, color: colors.inkMuted },
+  sectionTitle: { fontSize: 18, color: colors.ink, marginBottom: 15, fontFamily: fonts.title },
+  emptyText: { fontSize: 14, color: colors.inkMuted, fontStyle: 'italic', marginTop: 10 },
+  certCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.background, padding: 16, borderRadius: 12, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
+  certIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   certIconImage: { width: 44, height: 44, borderRadius: 22, marginRight: 15 }, 
   certInfo: { flex: 1 },
-  certTitle: { fontSize: 16, fontWeight: 'bold', color: '#191919', marginBottom: 4 },
-  certDate: { fontSize: 12, color: '#716C83' },
+  certTitle: { fontSize: 16, fontWeight: 'bold', color: colors.ink, marginBottom: 4 },
+  certDate: { fontSize: 12, color: colors.inkMuted },
   deleteBtn: { padding: 8 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919', marginBottom: 8 },
-  modalSubtitle: { fontSize: 14, color: '#716C83', marginBottom: 20 },
-  modalInput: { backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, padding: 15, fontSize: 16, color: '#191919', marginBottom: 20 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(11,21,14,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent: { backgroundColor: colors.background, borderRadius: 16, padding: 24, width: '100%', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5 },
+  modalTitle: { fontSize: 18, color: colors.ink, marginBottom: 8, fontFamily: fonts.title },
+  modalSubtitle: { fontSize: 14, color: colors.inkMuted, marginBottom: 20 },
+  modalInput: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 15, fontSize: 16, color: colors.ink, marginBottom: 20 },
   modalButtons: { flexDirection: 'row', justifyContent: 'space-between' },
-  cancelBtn: { flex: 1, padding: 15, alignItems: 'center', marginRight: 10, borderRadius: 10, backgroundColor: '#F0F4FF' },
-  cancelBtnText: { color: '#1D3979', fontWeight: 'bold', fontSize: 16 },
-  saveBtn: { flex: 1, padding: 15, alignItems: 'center', borderRadius: 10, backgroundColor: '#1D3979' },
-  saveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 }
+  cancelBtn: { flex: 1, padding: 15, alignItems: 'center', marginRight: 10, borderRadius: 10, backgroundColor: colors.blueTint },
+  cancelBtnText: { color: colors.blue, fontWeight: 'bold', fontSize: 16 },
+  saveBtn: { flex: 1, padding: 15, alignItems: 'center', borderRadius: 10, backgroundColor: colors.blue },
+  saveBtnText: { color: colors.background, fontWeight: 'bold', fontSize: 16 }
 });

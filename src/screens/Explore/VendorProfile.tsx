@@ -6,12 +6,15 @@
  * Never label submitted certificates as verified until backend approval exists.
  */
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
-import React, { useCallback, useState } from 'react';
+import { handle } from '../../utils/handle';
+import { colors, fonts } from '../../theme';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   Modal,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -25,7 +28,10 @@ import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
 import BookingModal from '../../components/BookingModal';
-import { getMembership, getSavedTargetIds } from '../../services/wishlist';
+import ReviewsCertificatesBox from '../../components/ReviewsCertificatesBox';
+import { vendorCity } from '../../data/vendorCities';
+import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
+import { getSavedTargetIds } from '../../services/wishlist';
 
 type Vendor = { id: string; username: string | null; role: string };
 type Service = {
@@ -57,7 +63,7 @@ const PREVIEW_POSTS: PostPreview[] = [
 ];
 
 const theme = {
-  background: '#FCFAFB',
+  background: colors.background,
   white: '#FFFFFF',
   ink: '#271D2B',
   muted: '#786B7A',
@@ -76,31 +82,35 @@ export default function VendorProfile({ navigation, route }: any) {
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
-  const [services, setServices] = useState<Service[]>([]);
+  const [, setServices] = useState<Service[]>([]); // still loaded, but the Services section is hidden for now
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [posts, setPosts] = useState<VendorPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
-  const [isSaved, setIsSaved] = useState(false);
-  const [saveProfileOpen, setSaveProfileOpen] = useState(false);
   const [savePostId, setSavePostId] = useState<string | null>(null);
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [expandedPost, setExpandedPost] = useState<PostPreview | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Pull-to-refresh reloads quietly (keeps the profile on screen) and shows the spinning star.
+  const quietReload = useRef(false);
+  const [pulling, setPulling] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
 
   // Refetch whenever this screen gains focus, including after a creator uploads a photo.
   useFocusEffect(useCallback(() => {
     let current = true;
-    setVendor(null);
-    setAvatarUrl(null);
-    setAvatarLoadFailed(false);
-    setServices([]);
-    setCertificates([]);
-    setPosts([]);
-    setErrors([]);
-    setLoading(true);
-    setIsSaved(false);
+    const quiet = quietReload.current;
+    quietReload.current = false;
+    if (!quiet) {
+      setVendor(null);
+      setAvatarUrl(null);
+      setAvatarLoadFailed(false);
+      setServices([]);
+      setCertificates([]);
+      setPosts([]);
+      setErrors([]);
+      setLoading(true);
+    }
 
     if (!vendorId) {
       setErrors(['No vendor was selected.']);
@@ -150,20 +160,12 @@ export default function VendorProfile({ navigation, route }: any) {
       } catch (caughtError) {
         if (current) setErrors([`Could not load creator: ${String(caughtError)}`]);
       } finally {
-        if (current) setLoading(false);
+        if (current) { setLoading(false); setPulling(false); }
       }
     };
     void load();
     return () => { current = false; };
   }, [vendorId, refreshKey]));
-
-  const refreshSavedProfile = useCallback(async () => {
-    if (!vendorId) return;
-    try {
-      const boards = await getMembership('vendor', vendorId);
-      setIsSaved(boards.size > 0);
-    } catch (error) { console.warn('[VendorProfile] Could not load saved status:', error); }
-  }, [vendorId]);
 
   const refreshSavedPhotos = useCallback(async () => {
     try { setSavedPostIds(await getSavedTargetIds('post')); }
@@ -171,10 +173,9 @@ export default function VendorProfile({ navigation, route }: any) {
   }, []);
 
   useFocusEffect(useCallback(() => {
-    void refreshSavedProfile();
     void refreshSavedPhotos();
     return () => {};
-  }, [refreshSavedProfile, refreshSavedPhotos]));
+  }, [refreshSavedPhotos]));
 
   const publicTiles: PostPreview[] = [
     ...posts.map(post => ({
@@ -251,7 +252,17 @@ export default function VendorProfile({ navigation, route }: any) {
           {errors.map(message => <Text style={styles.errorText} key={message}>{message}</Text>)}
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.body}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={pulling}
+              {...HIDDEN_SPINNER}
+              onRefresh={() => { quietReload.current = true; setPulling(true); setRefreshKey(n => n + 1); }}
+            />
+          }
+        >
           <View style={styles.hero}>
             <View style={styles.profileAvatar}>
               {avatarUrl && !avatarLoadFailed ? (
@@ -268,36 +279,10 @@ export default function VendorProfile({ navigation, route }: any) {
                 <Text style={styles.profileInitial}>{initial}</Text>
               )}
             </View>
-            <Text style={styles.name}>{displayName}</Text>
-            <Text style={styles.creatorLabel}>Creative professional · Nailed-It</Text>
+            <Text style={styles.name}>{handle(displayName)}</Text>
+            <Text style={styles.creatorLabel}>{['nail tech', vendorCity(vendor?.username)].filter(Boolean).join(' · ')}</Text>
 
-            {/* KNAPP-BEHÅLLAREN */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18, justifyContent: 'center', flexWrap: 'wrap' }}>
 
-              {/* SPARA-KNAPPEN */}
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel={isSaved ? 'Manage saved profile boards' : 'Save creator to a board'}
-                style={styles.favoriteButton}
-                onPress={() => setSaveProfileOpen(true)}
-              >
-                <Ionicons name={isSaved ? 'heart' : 'heart-outline'} size={18} color={theme.accent} />
-                <Text style={styles.favoriteText}>{isSaved ? 'Saved' : 'Save creator'}</Text>
-              </TouchableOpacity>
-
-              {/* CHATT-KNAPPEN */}
-              <TouchableOpacity
-                accessibilityRole="button"
-                style={styles.chatButton}
-                onPress={handleContactVendor}
-              >
-                <Ionicons name="chatbubble-outline" size={18} color={theme.white} />
-                <Text style={styles.chatButtonText}>Message</Text>
-              </TouchableOpacity>
-
-            </View>
-
-            <Text style={styles.prototypeNote}>Save this creator to your named wishlist boards.</Text>
           </View>
 
           {errors.length > 0 && (
@@ -310,86 +295,16 @@ export default function VendorProfile({ navigation, route }: any) {
             </View>
           )}
 
-          <View style={styles.statsBox}>
-            <View style={styles.stat}>
-              <Ionicons name="star-outline" size={20} color={theme.accent} />
-              <Text style={styles.statTitle}>Reviews</Text>
-              <Text style={styles.statSub}>Coming soon</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.stat}>
-              <Ionicons name="ribbon-outline" size={20} color={theme.accent} />
-              <Text style={styles.statTitle}>Certificates</Text>
-              <Text style={styles.statSub}>{certificates.length} submitted</Text>
-            </View>
-          </View>
-
-          <Text style={styles.sectionHeading}>Certifications & courses</Text>
-          <Text style={styles.sectionIntro}>
-            Vendor-submitted documents. Nailed-It's verification process is not connected yet;
-            these should not be treated as verified credentials.
-          </Text>
-          {certificates.length === 0 ? (
-            <Text style={styles.emptySmall}>No certificates submitted for this creator yet.</Text>
-          ) : (
-            certificates.map(cert => (
-              <View key={cert.id} style={styles.certificateRow}>
-                <View style={styles.certificateIcon}>
-                  <Ionicons name="ribbon-outline" size={22} color={theme.accent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.certificateName}>{cert.title}</Text>
-                  <Text style={styles.certificateSub}>Submitted · Unverified</Text>
-                </View>
-                <Ionicons name="document-text-outline" size={19} color={theme.muted} />
-              </View>
-            ))
-          )}
-
+          {/* Booking right under the profile, then the portfolio */}
           <View style={styles.bookingPanel}>
-            <View style={styles.bookingHeadingRow}>
-              <Ionicons name="calendar-outline" size={24} color={theme.accent} />
-              <Text style={styles.bookingTitle}>Book an appointment</Text>
-            </View>
-            <Text style={styles.bookingText}>
-              Choose a date, start time and the services you want. The total time and price are
-              checked before you confirm.
-            </Text>
             <TouchableOpacity accessibilityRole="button" onPress={() => setBookingOpen(true)} style={styles.bookButton}>
               <Text style={styles.bookButtonText}>Book</Text>
               <Ionicons name="arrow-forward" size={18} color={theme.white} />
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.sectionHeading}>Services</Text>
-          {services.length === 0 ? (
-            <Text style={styles.emptySmall}>No services are linked to this creator yet.</Text>
-          ) : (
-            services.map(service => {
-              const discounted = service.discount_price !== null;
-              return (
-                <View key={service.id} style={styles.serviceRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.serviceName}>{service.name}</Text>
-                    <Text style={styles.serviceMeta}>{service.category} · {service.duration_minutes} min</Text>
-                  </View>
-                  <View style={styles.servicePrices}>
-                    {discounted && <Text style={styles.oldPrice}>{money(service.price)}</Text>}
-                    <Text style={styles.servicePrice}>
-                      {money(discounted ? service.discount_price! : service.price)}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })
-          )}
-
           <View style={styles.portfolioHeading}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sectionHeading}>Portfolio</Text>
-              <Text style={styles.sectionIntro}>Three-column feed · Tap to expand · Hold a photo to save</Text>
-            </View>
-            <Ionicons name="grid-outline" size={20} color={theme.muted} />
+            <Text style={styles.sectionHeading}>Portfolio</Text>
           </View>
           <View style={styles.portfolioGrid}>
             {publicTiles.map(post => (
@@ -417,18 +332,18 @@ export default function VendorProfile({ navigation, route }: any) {
                     accessibilityLabel="Save this portfolio photo to a board"
                     onPress={() => setSavePostId(post.id)}
                   >
-                    <Ionicons name={savedPostIds.has(post.id) ? 'heart' : 'heart-outline'} size={17} color={theme.accent} />
+                    <Ionicons name={savedPostIds.has(post.id) ? 'heart' : 'heart-outline'} size={17} color={colors.wine} />
                   </TouchableOpacity>
                 )}
               </TouchableOpacity>
             ))}
           </View>
-          <Text style={styles.portfolioNote}>
-            Uploaded artwork is shown first, with pinned photos at the top.
-            Empty positions are placeholders; hold an uploaded photo to save it.
-          </Text>
+          {/* Reviews & certificates at the bottom */}
+          <ReviewsCertificatesBox style={{ marginTop: 4, marginHorizontal: 20, marginBottom: 28 }} />
         </ScrollView>
       )}
+      {/* Spinning star while pulling to refresh (same as Explore); sits just under the toolbar */}
+      <RefreshStar refreshing={pulling} y={150} />
 
       <Modal
         visible={expandedPost !== null}
@@ -439,7 +354,6 @@ export default function VendorProfile({ navigation, route }: any) {
         <View style={styles.modalShade}>
           <View style={styles.modalCard}>
             <View style={styles.modalTop}>
-              <Text style={styles.modalTitle}>Portfolio preview</Text>
               <TouchableOpacity
                 accessibilityRole="button"
                 accessibilityLabel="Close image preview"
@@ -455,11 +369,20 @@ export default function VendorProfile({ navigation, route }: any) {
                 <Ionicons name="image-outline" size={68} color="#775666" />
               )}
             </View>
-            <Text style={styles.modalCaption}>{expandedPost?.caption}</Text>
-            <Text style={styles.modalHint}>{expandedPost?.uri ? 'Creator portfolio photo' : 'Placeholder only — no photo uploaded yet.'}</Text>
+            <Text style={styles.modalCaption}>{handle(displayName)}</Text>
           </View>
         </View>
       </Modal>
+      {vendor && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`Message ${displayName}`}
+          style={styles.messageFab}
+          onPress={handleContactVendor}
+        >
+          <Ionicons name="chatbubble-outline" size={24} color={theme.white} />
+        </TouchableOpacity>
+      )}
       <BookingModal
         visible={bookingOpen && !!vendorId}
         creator={vendorId ? { id: vendorId, name: displayName } : null}
@@ -468,13 +391,6 @@ export default function VendorProfile({ navigation, route }: any) {
           setBookingOpen(false);
           Alert.alert('Appointment booked', 'You can find it in your Calendar.');
         }}
-      />
-      <SaveToBoardModal
-        visible={saveProfileOpen}
-        kind="vendor"
-        targetId={vendorId ?? null}
-        onClose={() => setSaveProfileOpen(false)}
-        onChanged={() => void refreshSavedProfile()}
       />
       <SaveToBoardModal
         visible={savePostId !== null}
@@ -490,45 +406,32 @@ export default function VendorProfile({ navigation, route }: any) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.background },
   toolbar: { height: 56, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border },
-  toolbarTitle: { color: theme.ink, fontSize: 16, fontWeight: '700' },
+  toolbarTitle: { color: theme.ink, fontSize: 16, fontFamily: fonts.title },
   toolbarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   center: { flex: 1, padding: 28, alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: theme.muted, marginTop: 12 },
-  body: { paddingBottom: 50 },
-  hero: { paddingTop: 34, paddingHorizontal: 24, alignItems: 'center', paddingBottom: 28 },
+  body: { paddingBottom: 100 }, // room for the floating message button
+  hero: { paddingTop: 34, paddingHorizontal: 24, alignItems: 'center', paddingBottom: 8 },
+  messageFab: { position: 'absolute', right: 20, bottom: 28, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
   profileAvatar: { width: 94, height: 94, borderRadius: 47, backgroundColor: '#E5CCD6', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   avatarPhoto: { width: '100%', height: '100%', borderRadius: 47 },
   profileInitial: { fontWeight: '700', fontSize: 41, color: theme.accent },
-  name: { color: theme.ink, fontWeight: '800', fontSize: 28 },
+  name: { color: theme.ink, fontSize: 28, fontFamily: fonts.title },
   creatorLabel: { fontSize: 13, color: theme.muted, marginTop: 7 },
-  favoriteButton: { flexDirection: 'row', gap: 7, alignItems: 'center', borderWidth: 1, borderColor: '#DEC2CE', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10 },
-  favoriteText: { color: theme.accent, fontWeight: '700', fontSize: 13 },
-  chatButton: { flexDirection: 'row', gap: 7, alignItems: 'center', backgroundColor: theme.accent, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10 },
-  chatButtonText: { color: theme.white, fontWeight: '700', fontSize: 13 },
-  prototypeNote: { fontSize: 11, color: theme.muted, marginTop: 9 },
   warning: { marginHorizontal: 20, backgroundColor: '#FFF0F2', borderRadius: 12, flexDirection: 'row', gap: 10, padding: 13, marginBottom: 20 },
   warningHeading: { color: '#903749', fontSize: 13, fontWeight: '700' },
   warningText: { color: '#903749', fontSize: 12, lineHeight: 19, marginTop: 3 },
-  statsBox: { marginHorizontal: 20, backgroundColor: theme.white, borderRadius: 17, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', paddingVertical: 18, marginBottom: 28 },
-  stat: { flex: 1, alignItems: 'center', gap: 5 },
-  statTitle: { fontWeight: '700', color: theme.ink, fontSize: 15 },
-  statSub: { color: theme.muted, fontSize: 12 },
-  statDivider: { width: 1, backgroundColor: theme.border },
-  sectionHeading: { marginHorizontal: 20, marginBottom: 9, color: theme.ink, fontSize: 20, fontWeight: '800' },
-  sectionIntro: { marginHorizontal: 20, color: theme.muted, fontSize: 13, lineHeight: 19, marginBottom: 16 },
+  sectionHeading: { marginHorizontal: 20, marginBottom: 9, color: theme.ink, fontSize: 20, fontFamily: fonts.title },
   emptySmall: { marginHorizontal: 20, marginBottom: 22, padding: 16, backgroundColor: theme.white, color: theme.muted, borderRadius: 12, fontSize: 13 },
-  emptyTitle: { marginTop: 12, fontWeight: '800', fontSize: 19, color: theme.ink },
+  emptyTitle: { marginTop: 12, fontSize: 19, color: theme.ink, fontFamily: fonts.title },
   emptyText: { marginTop: 8, textAlign: 'center', color: theme.muted, lineHeight: 21 },
   errorText: { marginTop: 8, fontSize: 12, color: '#A12339' },
   certificateRow: { marginHorizontal: 20, marginBottom: 10, borderRadius: 13, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.white, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13 },
   certificateIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.accentSoft, alignItems: 'center', justifyContent: 'center' },
   certificateName: { color: theme.ink, fontWeight: '700', fontSize: 14 },
   certificateSub: { color: theme.muted, fontSize: 12, marginTop: 4 },
-  bookingPanel: { margin: 20, marginTop: 25, padding: 20, borderRadius: 18, backgroundColor: theme.accentSoft },
-  bookingHeadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  bookingTitle: { color: theme.ink, fontSize: 19, fontWeight: '800' },
-  bookingText: { color: theme.muted, fontSize: 13, lineHeight: 20, marginTop: 11, marginBottom: 18 },
-  bookButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: theme.accent, paddingVertical: 14, borderRadius: 12 },
+  bookingPanel: { marginHorizontal: 20, marginTop: 8, marginBottom: 20 },
+  bookButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: colors.blue, paddingVertical: 14, borderRadius: 12 },
   bookButtonText: { color: theme.white, fontWeight: '800', fontSize: 16 },
   serviceRow: { backgroundColor: theme.white, borderColor: theme.border, borderWidth: 1, borderRadius: 12, marginHorizontal: 20, marginBottom: 9, padding: 15, flexDirection: 'row', gap: 8, alignItems: 'center' },
   serviceName: { color: theme.ink, fontSize: 15, fontWeight: '700' },
@@ -536,19 +439,16 @@ const styles = StyleSheet.create({
   servicePrices: { alignItems: 'flex-end' },
   servicePrice: { color: theme.accent, fontWeight: '800', fontSize: 15 },
   oldPrice: { color: theme.muted, fontSize: 12, textDecorationLine: 'line-through', marginBottom: 3 },
-  portfolioHeading: { marginTop: 25, flexDirection: 'row', alignItems: 'center', marginRight: 22 },
-  portfolioGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 3, paddingHorizontal: 3 },
+  portfolioHeading: { marginTop: 8, marginBottom: 4, flexDirection: 'row', alignItems: 'center', marginRight: 22 },
+  portfolioGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 3, paddingHorizontal: 20 }, // same side margin as the Book button
   portfolioTile: { width: '32.7%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   portfolioImage: { width: '100%', height: '100%' },
   pinIcon: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(39,29,43,0.55)', borderRadius: 12, padding: 5 },
-  postSaveButton: { position: 'absolute', bottom: 7, right: 7, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 20, padding: 7 },
-  portfolioNote: { color: theme.muted, fontSize: 12, lineHeight: 18, marginHorizontal: 20, marginTop: 13 },
+  postSaveButton: { position: 'absolute', bottom: 7, right: 7, backgroundColor: colors.pink, borderRadius: 20, padding: 7 },
   modalShade: { flex: 1, backgroundColor: 'rgba(25,18,26,0.66)', justifyContent: 'center', padding: 18 },
   modalCard: { padding: 16, backgroundColor: theme.white, borderRadius: 17 },
-  modalTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 13 },
-  modalTitle: { color: theme.ink, fontSize: 17, fontWeight: '700' },
+  modalTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 13 }, // just the close button
   modalImage: { width: '100%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8, overflow: 'hidden' },
   modalPhoto: { width: '100%', height: '100%' },
   modalCaption: { color: theme.ink, fontWeight: '700', fontSize: 15, marginTop: 14 },
-  modalHint: { color: theme.muted, fontSize: 12, marginTop: 4 },
 });

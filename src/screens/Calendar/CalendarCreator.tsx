@@ -1,6 +1,11 @@
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
+import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
+import StarredTitle from '../../components/StarredTitle';
+import { handle } from '../../utils/handle';
+
+const STAR = require('../../../assets/images/star.png');
 import { useFocusEffect } from '@react-navigation/native';
-import { colors } from '../../theme';
+import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';
 import {
   View,
@@ -10,6 +15,8 @@ import {
   TextInput,
   Alert,
   StyleSheet,
+  RefreshControl,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -85,6 +92,8 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 };
 
 export default function CalendarCreator() {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh();
   const today = new Date();
   const todayKey = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
   const nowTime = `${pad(today.getHours())}:${pad(today.getMinutes())}`;
@@ -149,6 +158,7 @@ export default function CalendarCreator() {
         setSlotsLoadError(getErrorMessage(error, 'Could not load the creator calendar.'));
       } finally {
         if (isMounted) setSlotsLoading(false);
+        pull.doneLoading();
       }
     };
 
@@ -156,7 +166,7 @@ export default function CalendarCreator() {
     return () => {
       isMounted = false;
     };
-  }, []));
+  }, [pull.refreshKey])); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getAvailableSlots = (key: string): Slot[] =>
     availableSlots
@@ -167,15 +177,42 @@ export default function CalendarCreator() {
       .filter((slot) => slot.date === key)
       .sort((a, b) => a.start.localeCompare(b.start));
 
+  /**
+   * What is still free on a day: each availability window minus that day's bookings.
+   * A fully booked window disappears; a partly booked one shows only its free part
+   * (e.g. 10:00–12:00 with a 10:00–11:30 booking → 11:30–12:00), matching what customers can book.
+   * Each piece keeps its window's id, so removing it still removes the saved window.
+   */
+  const getFreeSlots = (key: string): Slot[] => {
+    const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+    const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const busy = [
+      ...appointments.filter((a) => a.appointment_date === key).map((a) => [toMin(a.start_time), toMin(a.end_time)]),
+      ...getBookedSlots(key).map((b) => [toMin(b.start), toMin(b.end)]),
+    ].sort((a, b) => a[0] - b[0]);
+    const free: Slot[] = [];
+    for (const slot of getAvailableSlots(key)) {
+      let cursor = toMin(slot.start);
+      const end = toMin(slot.end);
+      for (const [bs, be] of busy) {
+        if (be <= cursor || bs >= end) continue;
+        if (bs > cursor) free.push({ ...slot, start: toHHMM(cursor), end: toHHMM(bs) });
+        cursor = Math.max(cursor, be);
+      }
+      if (cursor < end) free.push({ ...slot, start: toHHMM(cursor), end: toHHMM(end) });
+    }
+    return free;
+  };
+
   // Find the next future appointment; availability alone is not a booking.
   type Upcoming = { date: string; start: string; end: string; label: string };
   const upcoming: Upcoming[] = [
-    ...bookedSlots.map((s) => ({ date: s.date, start: s.start, end: s.end, label: `${s.service} · ${s.customer}` })),
+    ...bookedSlots.map((s) => ({ date: s.date, start: s.start, end: s.end, label: `${s.service} · ${handle(s.customer)}` })),
     ...appointments.map((a) => ({
       date: a.appointment_date,
       start: a.start_time.slice(0, 5),
       end: a.end_time.slice(0, 5),
-      label: `${a.services.map((s) => s.name).join(', ')} · ${a.customer_name}`,
+      label: `${a.services.map((s) => s.name).join(', ')} · ${handle(a.customer_name)}`,
     })),
   ];
   const nextUp: Upcoming | null =
@@ -325,7 +362,7 @@ export default function CalendarCreator() {
           <Ionicons
             name="time-outline"
             size={18}
-            color={isBooked ? '#27834A' : '#555'}
+            color={isBooked ? colors.blue : colors.ink}
           />
           <View>
             <Text style={styles.slotText}>
@@ -346,14 +383,14 @@ export default function CalendarCreator() {
             hitSlop={8}
             accessibilityLabel={isBooked ? 'Cancel appointment' : 'Remove available slot'}
           >
-            <Ionicons name="remove" size={16} color="#fff" />
+            <Ionicons name="remove" size={16} color={colors.background} />
           </TouchableOpacity>
         </View>
       </View>
     );
   };
 
-  const availableForDay = getAvailableSlots(selected);
+  const availableForDay = getFreeSlots(selected);
   const bookedForDay = getBookedSlots(selected);
 
   return (
@@ -361,31 +398,34 @@ export default function CalendarCreator() {
       {/* Header with + button */}
       <View style={styles.header}>
         <View style={{ width: 28 }} />
-        <Text style={styles.title}>Calendar</Text>
+        <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
         <View style={{ width: 28 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
         {/* Next Booking */}
         <View style={styles.nextUp}>
           <Text style={styles.nextUpLabel}>Next Booking</Text>
-          <Text style={styles.nextUpText}>
-            {nextUp
-              ? `${shortLabel(nextUp.date)} ${nextUp.start}–${nextUp.end}, ${nextUp.label}`
-              : 'You have no upcoming booked appointments.'}
-          </Text>
+          {/* Row 1: date + time. Row 2 (smaller): service · customer */}
+          <View style={styles.nextUpRow}>
+            <Text style={styles.nextUpText}>
+              {nextUp ? `${shortLabel(nextUp.date)} ${nextUp.start}–${nextUp.end}` : 'You have no upcoming booked appointments.'}
+            </Text>
+            {nextUp && <Image source={STAR} style={styles.nextUpStar} />}
+          </View>
+          {nextUp && <Text style={styles.nextUpDetail}>{nextUp.label}</Text>}
         </View>
 
         {/* Month switcher */}
         <View style={styles.monthRow}>
           <TouchableOpacity onPress={() => changeMonth(-1)} hitSlop={10}>
-            <Ionicons name="chevron-back" size={22} color="#333" />
+            <Ionicons name="chevron-back" size={22} color={colors.ink} />
           </TouchableOpacity>
           <Text style={styles.monthText}>
             {MONTHS[month]} {year}
           </Text>
           <TouchableOpacity onPress={() => changeMonth(1)} hitSlop={10}>
-            <Ionicons name="chevron-forward" size={22} color="#333" />
+            <Ionicons name="chevron-forward" size={22} color={colors.ink} />
           </TouchableOpacity>
         </View>
 
@@ -405,6 +445,7 @@ export default function CalendarCreator() {
             const key = dateKey(year, month, day);
             const isToday = key === todayKey;
             const isSelected = key === selected;
+            const isNextBooking = key === nextUp?.date;
             return (
               <TouchableOpacity key={i} style={styles.cell} onPress={() => setSelected(key)}>
                 <View
@@ -423,6 +464,8 @@ export default function CalendarCreator() {
                   >
                     {day}
                   </Text>
+                  {/* Small yellow star on the day of the next booking */}
+                  {isNextBooking && <Image source={STAR} style={styles.nextStar} />}
                 </View>
               </TouchableOpacity>
             );
@@ -431,9 +474,9 @@ export default function CalendarCreator() {
 
         {/* Available slots for selected day */}
         <View style={styles.slotsHeader}>
-          <Text style={styles.slotsTitle}>Available · {longLabel(selected)}</Text>
+          <Text style={styles.slotsTitle}>Available<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
           <TouchableOpacity onPress={openModal} hitSlop={10} accessibilityLabel="Add available slot">
-            <Ionicons name="add" size={26} color="tomato" />
+            <Ionicons name="add" size={26} color={colors.wine} />
           </TouchableOpacity>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
@@ -443,11 +486,11 @@ export default function CalendarCreator() {
               {slotsLoading ? 'Loading creator calendar...' : 'No available slots this day.'}
             </Text>
           )}
-          {availableForDay.map(renderSlot)}
+          {availableForDay.map((slot) => <Fragment key={`${slot.id}-${slot.start}`}>{renderSlot(slot)}</Fragment>)}
         </View>
 
         <View style={styles.slotsHeader}>
-          <Text style={styles.slotsTitle}>Booked · {longLabel(selected)}</Text>
+          <Text style={styles.slotsTitle}>Booked<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
           {bookedForDay.length === 0 && appointmentsForDay.length === 0 && (
@@ -458,7 +501,7 @@ export default function CalendarCreator() {
           {appointmentsForDay.map((a) => (
             <View key={a.id} style={styles.slotWrap}>
               <View style={[styles.slot, styles.bookedSlot]}>
-                <Ionicons name="calendar-outline" size={18} color="#27834A" />
+                <Ionicons name="calendar-outline" size={18} color={colors.blue} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.slotText}>
                     {a.start_time.slice(0, 5)} – {a.end_time.slice(0, 5)}
@@ -484,7 +527,8 @@ export default function CalendarCreator() {
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add availability · {longLabel(selected)}</Text>
+            <Text style={styles.modalTitle}>Add availability</Text>
+            <Text style={styles.modalDate}>{longLabel(selected)}</Text>
             <TextInput
               style={styles.input}
               placeholder="Start (e.g. 09:00)"
@@ -513,12 +557,13 @@ export default function CalendarCreator() {
           </View>
         </View>
       </Modal>
+      <RefreshStar refreshing={pull.refreshing} y={120} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -526,23 +571,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
-  title: { fontSize: 20, fontWeight: '700' },
+  title: { fontSize: 20 },
   nextUp: {
     marginHorizontal: 16,
     marginTop: 8,
     marginBottom: 20,
     padding: 18,
     borderRadius: 14,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: colors.blue,
   },
-  nextUpLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.danger,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  nextUpText: { fontSize: 24, fontWeight: '700', marginTop: 4, color: '#222' },
+  nextUpLabel: { fontSize: 12, fontFamily: fonts.title, color: colors.blueDeep, textTransform: 'uppercase' },
+  nextUpText: { fontSize: 24, fontWeight: '700', marginTop: 6, color: colors.background },
+  nextUpRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  nextUpStar: { width: 18, height: 18, alignSelf: 'flex-start', marginTop: -2, marginLeft: -5 }, // up and to the right of the date/time
+  nextUpDetail: { fontSize: 15, marginTop: 4, color: colors.background }, // service · person
+  nextStar: { position: 'absolute', top: 4, right: -4, width: 14, height: 14 }, // up and to the right of the number
   monthRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -550,12 +593,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
-  monthText: { fontSize: 18, fontWeight: '600' },
+  monthText: { fontSize: 18, color: colors.ink, fontFamily: fonts.title },
   weekRow: { flexDirection: 'row', paddingHorizontal: 8 },
   weekday: {
     width: `${100 / 7}%`,
     textAlign: 'center',
-    color: '#888',
+    color: colors.inkMuted,
     fontSize: 13,
     paddingBottom: 6,
   },
@@ -575,11 +618,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
-  todayCircle: { borderColor: colors.primary },
-  selectedCircle: { backgroundColor: colors.primary, borderColor: colors.primary },
-  dayText: { fontSize: 16, color: '#222' },
-  todayText: { color: colors.text, fontWeight: '700' },
-  selectedText: { color: colors.primarySoft, fontWeight: '700' },
+  todayCircle: { borderColor: colors.wine },
+  selectedCircle: { backgroundColor: colors.pink, borderColor: colors.pink },
+  dayText: { fontSize: 16, color: colors.ink },
+  todayText: { color: colors.ink, fontWeight: '700' },
+  selectedText: { color: colors.wine, fontWeight: '700' },
   slotsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -588,12 +631,14 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#ccc',
+    borderTopColor: colors.line,
     marginTop: 8,
   },
-  slotsTitle: { fontSize: 16, fontWeight: '600' },
-  empty: { color: '#888', paddingVertical: 8 },
-  bookingDetails: { color: '#666', marginBottom: 12 },
+  slotsTitle: { fontSize: 13, color: colors.ink, fontFamily: fonts.title },
+  // HORIZON draws no visible dot, so the separator uses the regular font
+  titleDot: { fontFamily: fonts.regular, fontWeight: 'normal', color: colors.ink },
+  empty: { color: colors.inkMuted, paddingVertical: 8 },
+  bookingDetails: { color: colors.inkMuted, marginBottom: 12 },
   slotWrap: { marginBottom: 10, paddingTop: 8 },
   slot: {
     flexDirection: 'row',
@@ -602,12 +647,12 @@ const styles = StyleSheet.create({
     padding: 14,
     paddingRight: 52,
     borderRadius: 10,
-    backgroundColor: '#f0ece5',
+    backgroundColor: colors.line,
   },
-  bookedSlot: { backgroundColor: '#eaf6ee' },
+  bookedSlot: { backgroundColor: colors.blueTint },
   slotText: { fontSize: 16, fontWeight: '600' },
-  slotService: { fontSize: 14, color: '#666', marginTop: 2 },
-  slotCustomer: { fontSize: 13, color: '#27834A', fontWeight: '600', marginTop: 4 },
+  slotService: { fontSize: 14, color: colors.inkMuted, marginTop: 2 },
+  slotCustomer: { fontSize: 13, color: colors.blue, fontWeight: '600', marginTop: 4 },
   slotActions: {
     position: 'absolute',
     top: 0,
@@ -619,23 +664,24 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.wine,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bookAction: { backgroundColor: '#27834A' },
+  bookAction: { backgroundColor: colors.blue },
   removeAction: { backgroundColor: 'crimson' },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(11,21,14,0.4)',
     justifyContent: 'center',
     padding: 24,
   },
-  modalCard: { backgroundColor: '#fff', borderRadius: 14, padding: 20 },
-  modalTitle: { fontSize: 17, fontWeight: '600', marginBottom: 12 },
+  modalCard: { backgroundColor: colors.background, borderRadius: 14, padding: 20 },
+  modalTitle: { fontSize: 17, color: colors.ink, fontFamily: fonts.title },
+  modalDate: { fontSize: 15, marginTop: 4, marginBottom: 12, color: colors.ink }, // second row under the title
   input: {
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: colors.line,
     borderRadius: 8,
     padding: 10,
     fontSize: 16,
@@ -649,12 +695,12 @@ const styles = StyleSheet.create({
     gap: 20,
     marginTop: 4,
   },
-  cancel: { fontSize: 16, color: '#666' },
+  cancel: { fontSize: 16, color: colors.inkMuted },
   saveButton: {
-    backgroundColor: colors.danger,
+    backgroundColor: colors.pink,
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 8,
   },
-  saveText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  saveText: { color: colors.wine, fontSize: 16, fontWeight: '600' },
 });

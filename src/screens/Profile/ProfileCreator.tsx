@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
-import { colors } from '../../theme';
-import { Text } from '../../components/AppText';   // in src/components use './AppText'
+import type React from 'react';
+import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
+import { useEffect, useRef, useState } from 'react';
+import { handle } from '../../utils/handle';
+import { colors, fonts } from '../../theme';
+import { Text } from '../../components/AppText';
+import ReviewsCertificatesBox from '../../components/ReviewsCertificatesBox';   // in src/components use './AppText'
 import {
   View,
   Image,
@@ -10,28 +14,31 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Animated,
+  PanResponder,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../services/supabase';
-import { listVendorPosts, uploadVendorPost, setVendorPostPinned, deleteVendorPost, publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
+import { listVendorPosts, uploadVendorPost, reorderVendorPosts, deleteVendorPost, publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl, uploadVendorAvatar } from '../../services/vendorAvatar';
 
 // Portfolio photos are stored in Supabase Storage and indexed by vendor_posts.
-type PortfolioPhoto = VendorPost & { uri: string; pinned: boolean };
+type PortfolioPhoto = VendorPost & { uri: string };
 
 const toPhoto = (post: VendorPost): PortfolioPhoto => ({
   ...post,
-  pinned: post.is_pinned,
   uri: publicPostUrl(post.storage_path),
 });
 
 const MAX_PHOTOS = 9;
-const MAX_PINNED = 3;
 const GRID_GAP = 4;
 
 export default function ProfileCreator({ navigation }: any) {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
@@ -58,7 +65,8 @@ export default function ProfileCreator({ navigation }: any) {
           .single();
         if (profileError) throw profileError;
 
-        if (active) setProfile(profileData);
+        // City lives on the auth account (user_metadata.city); profiles has no city column.
+        if (active) setProfile({ ...profileData, city: authData.user.user_metadata?.city ?? null });
         try {
           const url = await getVendorAvatarUrl(authData.user.id);
           if (active) setProfilePhotoUri(url);
@@ -83,12 +91,13 @@ export default function ProfileCreator({ navigation }: any) {
         }
       } finally {
         if (active) setLoading(false);
+        pull.doneLoading();
       }
     };
 
     void fetchProfile();
     return () => { active = false; };
-  }, []);
+  }, [pull.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSignOut = async () => {
     try {
@@ -165,7 +174,7 @@ export default function ProfileCreator({ navigation }: any) {
       for (const asset of result.assets.slice(0, remaining)) {
         try {
           const post = await uploadVendorPost(profile.id, asset);
-          setPhotos(current => [...current, toPhoto(post)]);
+          setPhotos(current => [toPhoto(post), ...current]); // newest first, like the saved order
         } catch (caughtError) {
           failures.push(caughtError instanceof Error ? caughtError.message : String(caughtError));
         }
@@ -173,27 +182,6 @@ export default function ProfileCreator({ navigation }: any) {
       if (failures.length) Alert.alert('Some photos could not be uploaded', failures.join('\n'));
     } catch (caughtError) {
       Alert.alert('Could not upload photos', String(caughtError));
-    } finally {
-      setPortfolioBusy(false);
-    }
-  };
-
-  const togglePinned = async (id: string) => {
-    if (portfolioBusy) return;
-    const photo = photos.find(item => item.id === id);
-    if (!photo) return;
-    if (!photo.pinned && photos.filter(item => item.pinned).length >= MAX_PINNED) {
-      Alert.alert('Three pinned photos', 'Unpin another photo to pin this one.');
-      return;
-    }
-    try {
-      setPortfolioBusy(true);
-      await setVendorPostPinned(photo, !photo.pinned);
-      setPhotos(current => current.map(item =>
-        item.id === id ? { ...item, pinned: !item.pinned, is_pinned: !item.pinned } : item
-      ));
-    } catch (caughtError) {
-      Alert.alert('Could not update pin', String(caughtError));
     } finally {
       setPortfolioBusy(false);
     }
@@ -224,8 +212,85 @@ export default function ProfileCreator({ navigation }: any) {
     ]);
   };
 
-  // Pinned posts appear first; other photos retain their original order.
-  const displayedPhotos = [...photos.filter(item => item.pinned), ...photos.filter(item => !item.pinned)];
+  // ---- Hold a photo and drag it to rearrange the portfolio ----
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOrder, setDragOrder] = useState<string[] | null>(null); // live order while dragging
+  const drag = useRef<{ id: string; grabX: number; grabY: number; origin: { x: number; y: number }; moved: boolean } | null>(null);
+  const gridRef = useRef<React.ComponentRef<typeof View>>(null);
+  const dragPos = useRef(new Animated.ValueXY()).current;
+  const latest = useRef({ photos, dragOrder, tileSize });
+  latest.current = { photos, dragOrder, tileSize };
+
+  // Tiles are a fixed 3-column grid, so slot positions can be computed.
+  const slotOf = (index: number) => ({
+    x: (index % 3) * (tileSize + GRID_GAP),
+    y: Math.floor(index / 3) * (tileSize + GRID_GAP),
+  });
+
+  const displayedPhotos = dragOrder
+    ? dragOrder.map(id => photos.find(p => p.id === id)).filter((p): p is PortfolioPhoto => !!p)
+    : photos;
+
+  const startDrag = (photo: PortfolioPhoto, index: number, pageX: number, pageY: number) => {
+    if (portfolioBusy || !gridRef.current) return;
+    gridRef.current.measureInWindow((gx, gy) => {
+      const slot = slotOf(index);
+      drag.current = { id: photo.id, grabX: pageX - gx - slot.x, grabY: pageY - gy - slot.y, origin: { x: gx, y: gy }, moved: false };
+      dragPos.setValue(slot);
+      setDragOrder(photos.map(p => p.id));
+      setDragId(photo.id);
+    });
+  };
+
+  const finishDrag = async () => {
+    const order = latest.current.dragOrder;
+    const before = latest.current.photos.map(p => p.id);
+    drag.current = null;
+    setDragId(null);
+    setDragOrder(null);
+    if (!order || order.join() === before.join() || !profile?.id) return;
+    const byId = new Map(latest.current.photos.map(p => [p.id, p]));
+    const previous = latest.current.photos;
+    setPhotos(order.map(id => byId.get(id)!)); // show the new order right away
+    try {
+      await reorderVendorPosts(profile.id, order);
+    } catch (caughtError) {
+      setPhotos(previous);
+      Alert.alert('Could not save the new order', String(caughtError));
+    }
+  };
+  const finishDragRef = useRef(finishDrag);
+  finishDragRef.current = finishDrag;
+
+  // The grid takes over the touch once a photo is picked up and the finger moves.
+  const gridResponder = useRef(PanResponder.create({
+    onMoveShouldSetPanResponderCapture: () => !!drag.current,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => { if (drag.current) drag.current.moved = true; },
+    onPanResponderMove: (_, g) => {
+      const d = drag.current;
+      if (!d) return;
+      const { tileSize: size, dragOrder: order } = latest.current;
+      const x = g.moveX - d.origin.x;
+      const y = g.moveY - d.origin.y;
+      dragPos.setValue({ x: x - d.grabX, y: y - d.grabY });
+      if (!order) return;
+      const col = Math.min(2, Math.max(0, Math.floor(x / (size + GRID_GAP))));
+      const row = Math.max(0, Math.floor(y / (size + GRID_GAP)));
+      const target = Math.min(order.length - 1, row * 3 + col);
+      setDragOrder(current => {
+        if (!current) return current;
+        const from = current.indexOf(d.id);
+        if (from === target) return current;
+        const next = current.filter(id => id !== d.id);
+        next.splice(target, 0, d.id);
+        return next;
+      });
+    },
+    onPanResponderRelease: () => void finishDragRef.current(),
+    onPanResponderTerminate: () => void finishDragRef.current(),
+  })).current;
+
   const selectedPhoto = photos.find(item => item.id === selectedPhotoId) ?? null;
   const displayName = profile?.username || 'Studio Name';
 
@@ -239,7 +304,7 @@ export default function ProfileCreator({ navigation }: any) {
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView refreshControl={<RefreshControl {...pull.control} />} style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} scrollEnabled={!dragId}>
         <View style={styles.header}>
           <View style={styles.imageWrapper}>
             {profilePhotoUri ? (
@@ -258,20 +323,11 @@ export default function ProfileCreator({ navigation }: any) {
               {avatarBusy ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="camera" size={20} color="#fff" />}
             </TouchableOpacity>
           </View>
-          <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.subtitle}>{profile?.email}</Text>
+          <Text style={styles.name}>{handle(displayName)}</Text>
+          <Text style={styles.subtitle}>{[profile?.email, profile?.city].filter(Boolean).join(' · ')}</Text>
         </View>
 
-        <View style={styles.statsContainer}>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}> 3 </Text>
-            <Text style={styles.statLabel}>Bookings</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}> 5.0 </Text>
-            <Text style={styles.statLabel}>Rating</Text>
-          </View>
-        </View>
+        <ReviewsCertificatesBox style={{ marginVertical: 30 }} />
 
         <TouchableOpacity
           style={styles.businessButton}
@@ -289,7 +345,7 @@ export default function ProfileCreator({ navigation }: any) {
           <View>
             <Text style={styles.portfolioTitle}>My portfolio</Text>
             <Text style={styles.portfolioSubtitle}>
-              {photos.length} of {MAX_PHOTOS} photos · Up to {MAX_PINNED} pinned
+              {photos.length} of {MAX_PHOTOS} photos · hold a photo to move it
             </Text>
           </View>
           <TouchableOpacity
@@ -298,29 +354,28 @@ export default function ProfileCreator({ navigation }: any) {
             style={[styles.addPhotosButton, portfolioBusy && { opacity: 0.5 }]}
             accessibilityLabel="Add photos to my portfolio"
           >
-            <Ionicons name="camera-outline" size={18} color="#fff" />
+            <Ionicons name="camera-outline" size={18} color={colors.blue} />
             <Text style={styles.addPhotosText}>{portfolioBusy ? 'Saving…' : 'Upload'}</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.grid}>
+        <View ref={gridRef} style={styles.grid} {...gridResponder.panHandlers}>
           {Array.from({ length: MAX_PHOTOS }, (_, index) => {
             const photo = displayedPhotos[index];
             return (
               <TouchableOpacity
                 key={photo?.id ?? `placeholder-${index}`}
                 onPress={photo ? () => setSelectedPhotoId(photo.id) : handleAddPortfolioPhotos}
-                style={[styles.gridTile, { width: tileSize, height: tileSize }]}
+                delayLongPress={300}
+                onLongPress={photo ? e => startDrag(photo, index, e.nativeEvent.pageX, e.nativeEvent.pageY) : undefined}
+                // Released without moving: put the photo down again.
+                onPressOut={() => setTimeout(() => { if (drag.current && !drag.current.moved) void finishDragRef.current(); }, 0)}
+                style={[styles.gridTile, { width: tileSize, height: tileSize }, photo && dragId === photo.id && styles.dragPlaceholder]}
                 accessibilityLabel={photo ? `Open portfolio photo ${index + 1}` : 'Add a portfolio photo'}
               >
                 {photo ? (
                   <>
                     <Image source={{ uri: photo.uri }} style={styles.tileImage} />
-                    {photo.pinned && (
-                      <View style={styles.pinBadge}>
-                        <Ionicons name="pin" size={15} color="#fff" />
-                      </View>
-                    )}
                   </>
                 ) : (
                   <View style={styles.tilePlaceholder}>
@@ -331,10 +386,20 @@ export default function ProfileCreator({ navigation }: any) {
               </TouchableOpacity>
             );
           })}
+          {/* The picked-up photo follows the finger */}
+          {dragId && (() => {
+            const photo = photos.find(p => p.id === dragId);
+            if (!photo) return null;
+            return (
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.dragGhost, { width: tileSize, height: tileSize, transform: [...dragPos.getTranslateTransform(), { scale: 1.08 }] }]}
+              >
+                <Image source={{ uri: photo.uri }} style={styles.tileImage} />
+              </Animated.View>
+            );
+          })()}
         </View>
-        <Text style={styles.portfolioNote}>
-Uploaded photos and pins are saved in Supabase and visible on your public creator profile. Your profile avatar still uses a local-only preview.
-        </Text>
 
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
@@ -359,10 +424,6 @@ Uploaded photos and pins are saved in Supabase and visible on your public creato
               <>
                 <Image source={{ uri: selectedPhoto.uri }} style={styles.modalImage} resizeMode="contain" />
                 <View style={styles.modalActions}>
-                  <TouchableOpacity style={styles.modalAction} disabled={portfolioBusy} onPress={() => void togglePinned(selectedPhoto.id)}>
-                    <Ionicons name={selectedPhoto.pinned ? 'pin' : 'pin-outline'} size={19} color="#1D3979" />
-                    <Text style={styles.modalActionText}>{selectedPhoto.pinned ? 'Unpin' : 'Pin to top'}</Text>
-                  </TouchableOpacity>
                   <TouchableOpacity style={styles.modalAction} disabled={portfolioBusy} onPress={() => removePhoto(selectedPhoto.id)}>
                     <Ionicons name="trash-outline" size={19} color="#BF0F46" />
                     <Text style={[styles.modalActionText, { color: '#BF0F46' }]}>Remove</Text>
@@ -373,6 +434,7 @@ Uploaded photos and pins are saved in Supabase and visible on your public creato
           </View>
         </View>
       </Modal>
+      <RefreshStar refreshing={pull.refreshing} y={130} />
     </>
   );
 }
@@ -386,33 +448,29 @@ const styles = StyleSheet.create({
   profilePicPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   profileInitial: { fontSize: 46, fontWeight: '700', color: colors.danger },
   cameraIcon: { position: 'absolute', bottom: 0, right: 5, backgroundColor: colors.text, padding: 8, borderRadius: 20, borderWidth: 3, borderColor: '#f9f9f9' },
-  name: { fontSize: 24, fontWeight: '900', color: colors.text },
+  name: { fontSize: 22, fontFamily: fonts.title, color: colors.ink },
   subtitle: { fontSize: 14, color: '#716C83', marginTop: 5 },
-  statsContainer: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 30, paddingVertical: 20, backgroundColor: '#fff', borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  statBox: { alignItems: 'center' },
-  statNumber: { fontSize: 22, fontWeight: 'bold', color: colors.danger },
-  statLabel: { fontSize: 13, color: '#716C83', marginTop: 5, fontWeight: 'bold' },
-  businessButton: { flexDirection: 'row', backgroundColor: colors.danger, padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, shadowColor: '#1D3979', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+  businessButton: { flexDirection: 'row', backgroundColor: colors.blue, padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, shadowColor: colors.blue, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   businessButtonLeft: { flexDirection: 'row', alignItems: 'center' },
   businessButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   portfolioHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  portfolioTitle: { fontSize: 20, fontWeight: '800', color: '#191919' },
+  portfolioTitle: { fontSize: 20, fontFamily: fonts.title, color: colors.ink },
   portfolioSubtitle: { fontSize: 12, color: '#716C83', marginTop: 4 },
-  addPhotosButton: { backgroundColor: colors.danger, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  addPhotosText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  addPhotosButton: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.blue, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  addPhotosText: { color: colors.blue, fontWeight: '700', fontSize: 14 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
   gridTile: { backgroundColor: '#F0EDF2', overflow: 'hidden' },
   tileImage: { width: '100%', height: '100%' },
   tilePlaceholder: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   tilePlaceholderText: { fontSize: 11, color: '#8B8794', marginTop: 3 },
-  pinBadge: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.55)', padding: 5, borderRadius: 14 },
-  portfolioNote: { color: '#716C83', fontSize: 12, lineHeight: 18, marginTop: 12, marginBottom: 28 },
-  signOutButton: { backgroundColor: 'transparent', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 10, borderWidth: 2, borderColor: '#930d38ff' },
-  signOutText: { color: '#930d38ff', fontSize: 16, fontWeight: 'bold' },
+  dragPlaceholder: { opacity: 0.25 },
+  dragGhost: { position: 'absolute', left: 0, top: 0, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 8 },
+  signOutButton: { backgroundColor: 'transparent', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 28, marginBottom: 10, borderWidth: 2, borderColor: colors.wine },
+  signOutText: { color: colors.wine, fontSize: 16, fontWeight: 'bold' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 16 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#191919' },
+  modalTitle: { fontSize: 17, fontFamily: fonts.title, color: colors.ink },
   modalImage: { width: '100%', height: 300, backgroundColor: '#f5f5f5', borderRadius: 10 },
   modalActions: { flexDirection: 'row', justifyContent: 'space-evenly', paddingTop: 17, paddingBottom: 5 },
   modalAction: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 7 },

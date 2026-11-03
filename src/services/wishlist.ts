@@ -22,14 +22,23 @@ async function currentUserId(): Promise<string> {
   return data.user.id;
 }
 
+// Flag on the auth user (user_metadata): set once the default "faves" collection has been
+// created, so deleting faves later doesn't bring it back.
+const DEFAULT_BOARD_FLAG = 'default_board_created';
+
 export async function getWishlistBoards(ensureDefault = true): Promise<WishlistBoard[]> {
-  const userId = await currentUserId();
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError) throw authError;
+  if (!auth.user) throw new Error('Please sign in to save favorites.');
+  const userId = auth.user.id;
+  const defaultAlreadyCreated = auth.user.user_metadata?.[DEFAULT_BOARD_FLAG] === true;
   const { data, error } = await supabase.from('wishlist_boards')
     .select('id, user_id, name, created_at').eq('user_id', userId)
     .order('created_at', { ascending: true });
   if (error) throw error;
   let boards = (data ?? []) as WishlistBoard[];
-  if (ensureDefault && !boards.some(b => b.name.toLowerCase() === 'faves')) {
+  // New accounts get "faves" once. Existing accounts that already have it just get the flag.
+  if (ensureDefault && !defaultAlreadyCreated && !boards.some(b => b.name.toLowerCase() === 'faves')) {
     const { error: addError } = await supabase.from('wishlist_boards')
       .insert({ user_id: userId, name: 'faves' });
     // Another screen may have created the default board at the same time.
@@ -39,6 +48,10 @@ export async function getWishlistBoards(ensureDefault = true): Promise<WishlistB
       .order('created_at', { ascending: true });
     if (again.error) throw again.error;
     boards = (again.data ?? []) as WishlistBoard[];
+  }
+  if (ensureDefault && !defaultAlreadyCreated) {
+    const { error: flagError } = await supabase.auth.updateUser({ data: { [DEFAULT_BOARD_FLAG]: true } });
+    if (flagError) console.warn('Could not record default collection flag:', flagError.message);
   }
   return boards.sort((a, b) =>
     (a.name.toLowerCase() === 'faves' ? -1 : b.name.toLowerCase() === 'faves' ? 1 : 0) ||
@@ -58,7 +71,6 @@ export async function createWishlistBoard(name: string): Promise<WishlistBoard> 
 }
 
 export async function renameWishlistBoard(board: WishlistBoard, name: string): Promise<void> {
-  if (board.name.toLowerCase() === 'faves') throw new Error('The default faves board cannot be renamed.');
   const cleanName = name.trim();
   if (!cleanName || cleanName.length > 60) throw new Error('Enter a name of up to 60 characters.');
   const userId = await currentUserId();
@@ -68,7 +80,6 @@ export async function renameWishlistBoard(board: WishlistBoard, name: string): P
 }
 
 export async function deleteWishlistBoard(board: WishlistBoard): Promise<void> {
-  if (board.name.toLowerCase() === 'faves') throw new Error('The default faves board cannot be deleted.');
   const userId = await currentUserId();
   const { error } = await supabase.from('wishlist_boards')
     .delete().eq('id', board.id).eq('user_id', userId);

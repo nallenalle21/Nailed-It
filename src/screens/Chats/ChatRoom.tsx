@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { colors, fonts } from '../../theme';
+import { handle } from '../../utils/handle';
 import { View, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { Text } from '../../components/AppText';
 import { Ionicons } from '@expo/vector-icons';
@@ -119,11 +121,11 @@ export default function ChatRoom({ route, navigation }: any) {
       {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#191919" />
+          <Ionicons name="arrow-back" size={24} color={colors.ink} />
         </TouchableOpacity>
 
         <View style={styles.titleContainer}>
-          <Text style={styles.headerTitle}>{customerName}</Text>
+          <Text style={styles.headerTitle}>{handle(customerName)}</Text>
 
           {/* Profil-ikonen visas nu för BÅDA, men leder till olika sidor beroende på roll */}
           <TouchableOpacity
@@ -145,7 +147,7 @@ export default function ChatRoom({ route, navigation }: any) {
               }
             }}
           >
-            <Ionicons name="person-circle-outline" size={22} color="#1D3979" />
+            <Ionicons name="person-circle-outline" size={22} color={colors.blue} />
           </TouchableOpacity>
         </View>
 
@@ -156,7 +158,7 @@ export default function ChatRoom({ route, navigation }: any) {
       {/* CHATT-LISTA */}
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#1D3979" />
+          <ActivityIndicator size="large" color={colors.blue} />
         </View>
       ) : (
         <FlatList
@@ -175,7 +177,7 @@ export default function ChatRoom({ route, navigation }: any) {
         <TextInput
           style={styles.textInput}
           placeholder="Type a message..."
-          placeholderTextColor="#716C83"
+          placeholderTextColor={colors.inkMuted}
           value={inputText}
           onChangeText={setInputText}
           multiline
@@ -186,7 +188,7 @@ export default function ChatRoom({ route, navigation }: any) {
           onPress={handleSendMessage}
           disabled={!inputText.trim()}
         >
-          <Ionicons name="send" size={20} color="#fff" />
+          <Ionicons name="send" size={20} color={colors.background} />
         </TouchableOpacity>
       </View>
 
@@ -195,7 +197,7 @@ export default function ChatRoom({ route, navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F9F9' },
+  container: { flex: 1, backgroundColor: colors.background },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row',
@@ -204,41 +206,41 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingBottom: 15,
     paddingHorizontal: 20,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: colors.line,
   },
   backBtn: { padding: 5 },
   titleContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#191919' },
+  headerTitle: { fontSize: 18, color: colors.ink, fontFamily: fonts.title },
   profileBtn: { padding: 2 },
   chatContainer: { padding: 20, paddingBottom: 40 },
   messageBubble: { maxWidth: '80%', padding: 12, borderRadius: 16, marginBottom: 12 },
-  myMessage: { alignSelf: 'flex-end', backgroundColor: '#1D3979', borderBottomRightRadius: 4 },
-  theirMessage: { alignSelf: 'flex-start', backgroundColor: '#EAEAEA', borderBottomLeftRadius: 4 },
+  myMessage: { alignSelf: 'flex-end', backgroundColor: colors.blue, borderBottomRightRadius: 4 },
+  theirMessage: { alignSelf: 'flex-start', backgroundColor: colors.line, borderBottomLeftRadius: 4 },
   messageText: { fontSize: 15, lineHeight: 22 },
-  myMessageText: { color: '#fff' },
-  theirMessageText: { color: '#191919' },
+  myMessageText: { color: colors.background },
+  theirMessageText: { color: colors.ink },
   timestamp: { fontSize: 11, marginTop: 6, alignSelf: 'flex-end' },
-  myTimestamp: { color: 'rgba(255, 255, 255, 0.7)' },
-  theirTimestamp: { color: '#716C83' },
+  myTimestamp: { color: 'rgba(250,249,246,0.75)' },
+  theirTimestamp: { color: colors.inkMuted },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     padding: 15,
     paddingBottom: 30,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+    borderTopColor: colors.line,
   },
   textInput: {
-    flex: 1, backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#E0E0E0',
+    flex: 1, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.line,
     borderRadius: 20, paddingHorizontal: 15, paddingTop: 12, paddingBottom: 12,
-    fontSize: 15, maxHeight: 100, color: '#191919',
+    fontSize: 15, maxHeight: 100, color: colors.ink,
   },
   sendBtn: {
-    backgroundColor: '#1D3979', width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.blue, width: 44, height: 44, borderRadius: 22,
     justifyContent: 'center', alignItems: 'center', marginLeft: 10,
   },
-  sendBtnDisabled: { backgroundColor: '#A0AABF' },
+  sendBtnDisabled: { backgroundColor: colors.inkMuted },
 });

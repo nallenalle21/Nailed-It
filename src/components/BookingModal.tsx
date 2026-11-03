@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -12,7 +14,11 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
-import { colors } from '../theme';
+import { colors, fonts } from '../theme';
+import { handle } from '../utils/handle';
+import { HIDDEN_SPINNER, RefreshStar } from './SparkleStars';
+
+const STAR = require('../../assets/images/star.png');
 import {
   availableDates,
   bookAppointment,
@@ -60,13 +66,18 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
   const [quoting, setQuoting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  // Pull-to-refresh reloads quietly (keeps the choices on screen) and shows the spinning star.
+  const quietReload = useRef(false);
+  const [pulling, setPulling] = useState(false);
 
   const creatorId = creator?.id ?? null;
 
   useEffect(() => {
     if (!visible || !creatorId) return;
     let active = true;
-    setLoading(true);
+    const quiet = quietReload.current;
+    quietReload.current = false;
+    if (!quiet) setLoading(true);
     setLoadError(null);
     const now = new Date();
     const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + HORIZON_DAYS);
@@ -76,10 +87,12 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
         setServices(svc);
         setSchedule(sched);
         const dates = availableDates(sched);
-        setDate((prev) => (prev && dates.includes(prev) ? prev : initialDate && dates.includes(initialDate) ? initialDate : dates[0] ?? null));
+        // Nothing is pre-selected: keep the user's own pick on refresh, otherwise only the date
+        // already chosen in Explore's date filter (if any).
+        setDate((prev) => (prev && dates.includes(prev) ? prev : initialDate && dates.includes(initialDate) ? initialDate : null));
       })
       .catch((e) => active && setLoadError(errorMessage(e)))
-      .finally(() => active && setLoading(false));
+      .finally(() => { if (active) { setLoading(false); setPulling(false); } });
     return () => { active = false; };
   }, [visible, creatorId, initialDate, reloadKey]);
 
@@ -142,14 +155,14 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.close} onPress={onClose} hitSlop={16} accessibilityLabel="Close">
-            <Ionicons name="close" size={28} color="#222" />
+            <Ionicons name="close" size={28} color={colors.ink} />
           </TouchableOpacity>
-          <Text style={styles.title} numberOfLines={1}>Book {creator?.name ?? ''}</Text>
+          <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>Book {handle(creator?.name)}</Text>
           <View style={{ width: 44 }} />
         </View>
 
         {loading ? (
-          <ActivityIndicator style={{ marginTop: 40 }} color={colors.danger} size="large" />
+          <ActivityIndicator style={{ marginTop: 40 }} color={colors.wine} size="large" />
         ) : loadError ? (
           <View style={styles.pad}>
             <Text style={styles.error}>Could not load booking options: {loadError}</Text>
@@ -158,30 +171,39 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
             </TouchableOpacity>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
-            <Text style={styles.section}>1. date</Text>
+          <ScrollView
+            contentContainerStyle={{ paddingBottom: 24 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={pulling}
+                {...HIDDEN_SPINNER}
+                onRefresh={() => { quietReload.current = true; setPulling(true); setReloadKey((n) => n + 1); }}
+              />
+            }
+          >
+            <SectionTitle label="1. date" done={!!date} />
             {dates.length === 0 ? (
               <Text style={styles.empty}>This creator has no available times right now.</Text>
             ) : (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
                 {dates.map((d) => (
-                  <Chip key={d} label={dateLabel(d)} active={d === date} onPress={() => setDate(d)} />
+                  <Chip key={d} label={dateLabel(d)} active={d === date} onPress={() => setDate(d === date ? null : d)} />
                 ))}
               </ScrollView>
             )}
 
-            <Text style={styles.section}>2. start time</Text>
+            <SectionTitle label="2. start time" done={!!start} />
             {startTimes.length === 0 ? (
               <Text style={styles.empty}>Pick a date with availability first.</Text>
             ) : (
               <View style={[styles.chipRow, { flexWrap: 'wrap' }]}>
                 {startTimes.map((t) => (
-                  <Chip key={t} label={t} active={t === start} onPress={() => setStart(t)} />
+                  <Chip key={t} label={t} active={t === start} onPress={() => setStart(t === start ? null : t)} />
                 ))}
               </View>
             )}
 
-            <Text style={styles.section}>3. services</Text>
+            <SectionTitle label="3. services" done={selected.length > 0} />
             {services.length === 0 ? (
               <Text style={styles.empty}>This creator has not added any services yet.</Text>
             ) : (
@@ -190,7 +212,7 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
                 const hasDiscount = s.discount_price !== null && Number(s.discount_price) < Number(s.price);
                 return (
                   <TouchableOpacity key={s.id} style={[styles.service, active && styles.serviceActive]} onPress={() => toggleService(s.id)}>
-                    <Ionicons name={active ? 'checkbox' : 'square-outline'} size={22} color={active ? colors.danger : '#999'} />
+                    <Ionicons name={active ? 'checkbox' : 'square-outline'} size={22} color={active ? colors.pink : colors.ink} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.serviceName}>{s.name}</Text>
                       <Text style={styles.serviceMeta}>{s.duration_minutes} min</Text>
@@ -206,25 +228,37 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
           </ScrollView>
         )}
 
+        <RefreshStar refreshing={pulling} y={125} />
+
         <View style={styles.footer}>
           {quoting ? (
-            <ActivityIndicator color={colors.danger} />
+            <ActivityIndicator color={colors.wine} />
           ) : quote?.ok ? (
-            <Text style={styles.summary}>
+            <Text style={[styles.summary, styles.centered]}>
               {start}–{quote.end_time} · {quote.total_minutes} min · total {formatKr(quote.total_price)}
             </Text>
           ) : quote ? (
-            <Text style={styles.error}>{quote.reason}</Text>
+            <Text style={[styles.error, styles.centered]}>{quote.reason}</Text>
           ) : (
-            <Text style={styles.empty}>Choose a date, start time and at least one service.</Text>
+            <Text style={[styles.empty, styles.centered]}>Choose a date, start time and at least one service.</Text>
           )}
           <TouchableOpacity style={[styles.confirm, !canConfirm && styles.confirmDisabled]} disabled={!canConfirm} onPress={confirm}>
-            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmText}>Confirm booking</Text>}
+            {submitting ? <ActivityIndicator color={colors.wine} /> : <Text style={styles.confirmText}>Confirm booking</Text>}
           </TouchableOpacity>
         </View>
       </SafeAreaView>
       </SafeAreaProvider>
     </Modal>
+  );
+}
+
+/** Section heading; a small yellow star appears next to it once something is chosen. */
+function SectionTitle({ label, done }: { label: string; done: boolean }) {
+  return (
+    <View style={styles.sectionRow}>
+      <Text style={styles.sectionText}>{label}</Text>
+      {done && <Image source={STAR} style={styles.sectionStar} />}
+    </View>
   );
 }
 
@@ -240,26 +274,29 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: Platform.OS === 'android' ? 12 : 4, paddingBottom: 10 },
   close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 20, fontWeight: '700', flex: 1, textAlign: 'center' },
+  title: { fontSize: 15, fontFamily: fonts.title, color: colors.ink, flex: 1, textAlign: 'center' }, // shrinks further if a name is very long
   pad: { padding: 16 },
-  section: { fontSize: 16, fontWeight: '700', marginHorizontal: 16, marginTop: 20, marginBottom: 8 },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 20, marginBottom: 8 },
+  sectionText: { fontSize: 15, fontFamily: fonts.title, color: colors.ink },
+  sectionStar: { width: 18, height: 18 },
   chipRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16 },
   chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff', marginBottom: 8 },
-  chipActive: { backgroundColor: colors.danger, borderColor: colors.danger },
-  chipText: { fontSize: 14, color: '#333', fontWeight: '500' },
-  chipTextActive: { color: '#fff' },
-  empty: { color: '#888', fontSize: 14, marginHorizontal: 16 },
+  chipActive: { backgroundColor: colors.pink, borderColor: colors.pink },
+  chipText: { fontSize: 14, color: colors.ink, fontWeight: '500' },
+  chipTextActive: { color: colors.ink },
+  empty: { color: colors.ink, fontSize: 14, marginHorizontal: 16 },
   service: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16, marginBottom: 8, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#ddd' },
-  serviceActive: { borderColor: colors.danger, backgroundColor: colors.primarySoft },
-  serviceName: { fontSize: 16, fontWeight: '600' },
-  serviceMeta: { fontSize: 13, color: '#888', marginTop: 2 },
-  servicePrice: { fontSize: 15, fontWeight: '700' },
-  strike: { fontSize: 12, color: '#999', textDecorationLine: 'line-through' },
+  serviceActive: { borderColor: colors.wine, backgroundColor: colors.primarySoft },
+  serviceName: { fontSize: 16, fontWeight: '600', color: colors.ink },
+  serviceMeta: { fontSize: 13, color: colors.ink, marginTop: 2 },
+  servicePrice: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  strike: { fontSize: 12, color: colors.ink, textDecorationLine: 'line-through' },
   footer: { padding: 16, gap: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#ddd' },
-  summary: { fontSize: 16, fontWeight: '700' },
+  centered: { textAlign: 'center' }, // footer messages above Confirm booking
+  summary: { fontSize: 16, fontWeight: '700', color: colors.ink },
   error: { color: '#A12339', fontSize: 14 },
-  link: { color: colors.danger, fontWeight: '700', marginTop: 10 },
-  confirm: { backgroundColor: colors.danger, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  link: { color: colors.ink, fontWeight: '700', marginTop: 10 },
+  confirm: { backgroundColor: colors.pink, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   confirmDisabled: { opacity: 0.4 },
-  confirmText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  confirmText: { color: colors.wine, fontSize: 16, fontWeight: '700' },
 });

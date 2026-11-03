@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
+import StarredTitle from '../../components/StarredTitle';
+import { colors } from '../../theme';
+import { handle } from '../../utils/handle';
+import { View, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { Text } from '../../components/AppText';
 import { supabase } from '../../services/supabase';
 import { useIsFocused } from '@react-navigation/native';
 
 export default function ChatsCreator({ navigation }: any) {
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchMyChats());
   const [chats, setChats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const isFocused = useIsFocused(); // För att uppdatera listan varje gång man går in på skärmen
@@ -76,7 +82,7 @@ export default function ChatsCreator({ navigation }: any) {
       <Image source={{ uri: 'https://via.placeholder.com/50' }} style={styles.avatar} />
       <View style={styles.chatInfo}>
         <View style={styles.chatHeader}>
-          <Text style={[styles.name, item.unread && styles.unreadText]}>{item.customerName}</Text>
+          <Text style={[styles.name, item.unread && styles.unreadText]}>{handle(item.customerName)}</Text>
           <Text style={styles.time}>{item.time}</Text>
         </View>
         <Text style={[styles.message, item.unread && styles.unreadText]} numberOfLines={1}>
@@ -88,33 +94,39 @@ export default function ChatsCreator({ navigation }: any) {
   );
 
   if (loading) {
-    return <ActivityIndicator style={{ flex: 1, justifyContent: 'center' }} size="large" color="#1D3979" />;
+    return <ActivityIndicator style={{ flex: 1, justifyContent: 'center' }} size="large" color={colors.blue} />;
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.headerTitle}>Messages</Text>
-      <FlatList
+      <StarredTitle style={styles.headerTitle} containerStyle={styles.headerTitleWrap}>My Chats</StarredTitle>
+      <FlatList refreshControl={<RefreshControl {...pull.control} />}
         data={chats}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={styles.listContainer}
+        contentContainerStyle={[styles.listContainer, chats.length === 0 && styles.emptyContainer]}
+        ListEmptyComponent={<Text style={styles.emptyText}>no messages yet</Text>}
       />
+      <RefreshStar refreshing={pull.refreshing} y={155} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', marginHorizontal: 20, marginTop: 60, marginBottom: 10 },
+  container: { flex: 1, backgroundColor: colors.background },
+  headerTitleWrap: { alignSelf: 'flex-start', marginHorizontal: 20, marginTop: 84, marginBottom: 10 },
+  // Centres "no messages yet" in the space below the title
+  emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 80 },
+  emptyText: { color: colors.inkMuted, fontSize: 15 },
+  headerTitle: { fontSize: 24 },
   listContainer: { paddingHorizontal: 20 },
-  chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15, backgroundColor: '#e0e0e0' },
+  chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line },
+  avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15, backgroundColor: colors.line },
   chatInfo: { flex: 1, justifyContent: 'center' },
   chatHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
   name: { fontSize: 16, fontWeight: '500' },
-  time: { fontSize: 12, color: 'gray' },
-  message: { fontSize: 14, color: 'gray' },
-  unreadText: { fontWeight: 'bold', color: '#191919' },
+  time: { fontSize: 12, color: colors.inkMuted },
+  message: { fontSize: 14, color: colors.inkMuted },
+  unreadText: { fontWeight: 'bold', color: colors.ink },
   unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: 'red', marginLeft: 10 },
 });

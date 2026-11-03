@@ -1,10 +1,12 @@
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
-import { colors } from '../../theme';
+import { colors, fonts } from '../../theme';
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabase';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
+import PriceRangeSlider from '../../components/PriceRangeSlider';
+import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
 import { getSavedTargetIds } from '../../services/wishlist';
 import {
   View,
@@ -36,12 +38,24 @@ const SERVICES = [
   'Pedicure',
 ];
 
-const PRICE_RANGES = [
-  { label: 'Any price', min: 0, max: Infinity },
-  { label: 'Under 500 kr', min: 0, max: 499 },
-  { label: '500–800 kr', min: 500, max: 800 },
-  { label: '800+ kr', min: 801, max: Infinity },
-];
+// Custom burgundy pin with light pink dot (assets/images/map-pin@2x/@3x.png for sharp screens).
+const MAP_PIN = require('../../../assets/images/map-pin.png');
+
+// PROTOTYPE: every photo counts as matching all service/price/date filters, so choosing a
+// filter never empties the "get inspired" feed (search still applies; map pins still filter).
+// Set to false to filter photos by each nail tech's real services and availability.
+const PROTOTYPE_POSTS_MATCH_ALL_FILTERS = true;
+
+// Price slider bounds (SEK). The ends are open: 300 means "any low price", 3000 means "3000+".
+const PRICE_MIN = 300;
+const PRICE_MAX = 3000;
+const PRICE_STEP = 50;
+type PriceRange = [number, number];
+const FULL_PRICE_RANGE: PriceRange = [PRICE_MIN, PRICE_MAX];
+const isFullPriceRange = ([lo, hi]: PriceRange) => lo === PRICE_MIN && hi === PRICE_MAX;
+const inPriceRange = (price: number, [lo, hi]: PriceRange) =>
+  (lo === PRICE_MIN || price >= lo) && (hi === PRICE_MAX || price <= hi);
+const formatPriceRange = ([lo, hi]: PriceRange) => `${lo}–${hi === PRICE_MAX ? `${PRICE_MAX}+` : hi} kr`;
 
 type Tech = {
   id: string;
@@ -101,7 +115,7 @@ type DragTargetKey = 'fav' | 'profile';
 type Point = { x: number; y: number };
 type Targets = Record<DragTargetKey, Point>;
 
-const BRAND = '#a12640';
+const BRAND = colors.wine;
 const TARGET_SIZE = 60;
 const HIT_RADIUS = 36;   // must stay below TARGET_DX so the drop zones never overlap
 const TARGET_DX = 40;    // each bubble is 40px left/right of the finger (80px apart)
@@ -129,15 +143,31 @@ export default function ExploreCreator({ navigation }: any) {
   const [feedError, setFeedError] = useState<string | null>(null);
   const [feedWarning, setFeedWarning] = useState<string | null>(null);
   const [feedRefresh, setFeedRefresh] = useState(0);
+  // Pull-to-refresh shows a spinning star (RefreshStar) until the feed has reloaded.
+  const pulled = useRef(false);
+  const sawLoading = useRef(false);
+  const [pulling, setPulling] = useState(false);
+  useEffect(() => {
+    if (!pulled.current) return;
+    if (feedLoading) { sawLoading.current = true; return; }
+    if (sawLoading.current) {
+      pulled.current = false;
+      sawLoading.current = false;
+      setPulling(false);
+    }
+  }, [feedLoading]);
 
   const [query, setQuery] = useState('');
-  const [service, setService] = useState<string | null>(null);
-  const [priceIdx, setPriceIdx] = useState(0);
+  const [services, setServices] = useState<string[]>([]);         // several can be chosen
+  const [serviceDraft, setServiceDraft] = useState<string[]>([]); // edited in the sheet until Save
+  const [priceRange, setPriceRange] = useState<PriceRange | null>(null); // null = any price
   const [date, setDate] = useState<Date | null>(null);
 
   const [serviceModal, setServiceModal] = useState(false);
   const [priceModal, setPriceModal] = useState(false);
+  const [priceDraft, setPriceDraft] = useState<PriceRange>(FULL_PRICE_RANGE); // edited in the sheet until Save
   const [dateOpen, setDateOpen] = useState(false);
+  const [filterMenu, setFilterMenu] = useState(false);
 
   // hold-and-drag state
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -307,10 +337,9 @@ export default function ExploreCreator({ navigation }: any) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const range = PRICE_RANGES[priceIdx];
     return TECHS.filter((t) => {
-      if (service && !t.services.includes(service)) return false;
-      if (t.price < range.min || t.price > range.max) return false;
+      if (services.length && !services.some(sv => t.services.includes(sv))) return false;
+      if (priceRange && !inPriceRange(t.price, priceRange)) return false;
       if (
         q &&
         !(
@@ -322,7 +351,7 @@ export default function ExploreCreator({ navigation }: any) {
         return false;
       return true;
     });
-  }, [query, service, priceIdx]);
+  }, [query, services, priceRange]);
 
   // The masonry feed is based on real images; prices/services come from that
   // creator's own services. Date availability and geography are not connected yet.
@@ -339,8 +368,7 @@ export default function ExploreCreator({ navigation }: any) {
 
   const filteredPosts = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const selectedService = service?.toLowerCase();
-    const range = PRICE_RANGES[priceIdx];
+    const selectedServices = services.map(sv => sv.toLowerCase());
     return inspoPosts.filter(post => {
       const offered = servicesByVendor.get(post.vendorId) ?? [];
       if (q && !(
@@ -348,27 +376,32 @@ export default function ExploreCreator({ navigation }: any) {
         post.caption.toLowerCase().includes(q) ||
         offered.some(s => s.name.toLowerCase().includes(q) || (s.category || '').toLowerCase().includes(q))
       )) return false;
+      if (PROTOTYPE_POSTS_MATCH_ALL_FILTERS) return true;
 
-      if (selectedService && !offered.some(s =>
-        s.name.toLowerCase().includes(selectedService) ||
-        (s.category || '').toLowerCase().includes(selectedService)
+      if (selectedServices.length && !offered.some(s => selectedServices.some(sel =>
+        s.name.toLowerCase().includes(sel) ||
+        (s.category || '').toLowerCase().includes(sel))
       )) return false;
 
-      if (priceIdx !== 0 && !offered.some(s => {
+      if (priceRange && !offered.some(s => {
         const price = Number(s.discount_price ?? s.price);
-        return Number.isFinite(price) && price >= range.min && price <= range.max;
+        return Number.isFinite(price) && inPriceRange(price, priceRange);
       })) return false;
 
       return true;
     });
-  }, [inspoPosts, servicesByVendor, query, service, priceIdx]);
+  }, [inspoPosts, servicesByVendor, query, services, priceRange]);
 
-  const hasFilters = service || priceIdx !== 0 || date || query;
-  const clearAll = () => {
-    setQuery('');
-    setService(null);
-    setPriceIdx(0);
+  const filtersActive = services.length > 0 || !!priceRange || !!date;
+  const clearFilters = () => {
+    setServices([]);
+    setPriceRange(null);
     setDate(null);
+  };
+  // Close the filter menu first: iOS can't present a second modal while one is still open.
+  const openFromFilterMenu = (open: () => void) => {
+    setFilterMenu(false);
+    setTimeout(open, 350);
   };
 
   // Split inspo into two columns for the masonry layout
@@ -386,50 +419,6 @@ export default function ExploreCreator({ navigation }: any) {
     />
   );
 
-  const renderOptionModal = (
-    visible: boolean,
-    onClose: () => void,
-    title: string,
-    options: string[],
-    selected: string | null,
-    onSelect: (v: string | null) => void
-  ) => (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
-        <View style={styles.sheet}>
-          <Text style={styles.sheetTitle}>{title}</Text>
-          {options.map((opt, i) => {
-            const active = selected === opt;
-            return (
-              <TouchableOpacity
-                key={opt}
-                style={styles.option}
-                onPress={() => {
-                  onSelect(i === 0 && title === 'Price range' ? null : opt);
-                  onClose();
-                }}
-              >
-                <Text style={[styles.optionText, active && styles.optionActive]}>{opt}</Text>
-                {active && <Ionicons name="checkmark" size={20} color={colors.primary} />}
-              </TouchableOpacity>
-            );
-          })}
-          {title === 'Type of service' && (
-            <TouchableOpacity
-              style={styles.option}
-              onPress={() => {
-                setService(null);
-                onClose();
-              }}
-            >
-              <Text style={[styles.optionText, { color: '#888' }]}>Show all services</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Wrapper so the drag overlay can sit on top of the scroll content */}
@@ -442,62 +431,53 @@ export default function ExploreCreator({ navigation }: any) {
         <ScrollView
           scrollEnabled={scrollEnabled}
           refreshControl={
-            <RefreshControl refreshing={feedLoading} onRefresh={() => setFeedRefresh(n => n + 1)} />
+            <RefreshControl
+              refreshing={pulling}
+              {...HIDDEN_SPINNER}
+              onRefresh={() => {
+                pulled.current = true;
+                sawLoading.current = false;
+                setPulling(true);
+                setFeedRefresh(n => n + 1);
+              }}
+            />
           }
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 32 }}
         >
           {/* PART 1: search + filters */}
-          <View style={styles.searchBox}>
-            <Ionicons name="search" size={18} color="#888" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="search nail techs, areas, styles"
-              value={query}
-              onChangeText={setQuery}
-              returnKeyType="search"
-            />
-            {query ? (
-              <TouchableOpacity onPress={() => setQuery('')} hitSlop={10}>
-                <Ionicons name="close-circle" size={18} color="#bbb" />
-              </TouchableOpacity>
-            ) : null}
+          <View style={styles.searchRow}>
+            <View style={styles.searchBox}>
+              <Ionicons name="search" size={18} color={colors.blue} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="search nail techs, areas, styles"
+                value={query}
+                onChangeText={setQuery}
+                returnKeyType="search"
+              />
+              {query ? (
+                <TouchableOpacity onPress={() => setQuery('')} hitSlop={10}>
+                  <Ionicons name="close-circle" size={18} color="#bbb" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <TouchableOpacity
+              style={styles.filterButton}
+              onPress={() => setFilterMenu(true)}
+              accessibilityLabel="Filter by service, price and date"
+            >
+              <Ionicons name="options-outline" size={22} color={colors.blue} />
+              {filtersActive ? <View style={styles.filterDot} /> : null}
+            </TouchableOpacity>
           </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-          >
-            <FilterPill
-              icon="brush-outline"
-              label={service ?? 'Service'}
-              active={!!service}
-              onPress={() => setServiceModal(true)}
-            />
-            <FilterPill
-              icon="cash-outline"
-              label={priceIdx === 0 ? 'Price' : PRICE_RANGES[priceIdx].label}
-              active={priceIdx !== 0}
-              onPress={() => setPriceModal(true)}
-            />
-            <FilterPill
-              icon="calendar-outline"
-              label={date ? formatDate(date) : 'Date'}
-              active={!!date}
-              onPress={() => setDateOpen(true)}
-            />
-            {hasFilters ? (
-              <TouchableOpacity style={styles.clear} onPress={clearAll}>
-                <Text style={styles.clearText}>Clear</Text>
-              </TouchableOpacity>
-            ) : null}
-          </ScrollView>
 
           {/* PART 2: map */}
           <View style={styles.mapHeader}>
-            <Text style={styles.sectionTitle}>Sample studios in Stockholm</Text>
-            <Text style={styles.count}>{filtered.length} found</Text>
+            <View style={styles.starTitle}>
+              <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
+              <Text style={styles.sectionTitle}>find your Nail tech</Text>
+            </View>
           </View>
           <View style={styles.mapWrap}>
             <MapView style={styles.map} initialRegion={STOCKHOLM}>
@@ -507,21 +487,25 @@ export default function ExploreCreator({ navigation }: any) {
                   coordinate={{ latitude: t.lat, longitude: t.lng }}
                   title={t.name}
                   description={`${t.area} · from ${t.price} kr`}
-                  pinColor={colors.primary}
-                />
+                  anchor={{ x: 0.5, y: 1 }}        // Android: pin tip on the location
+                  centerOffset={{ x: 0, y: -18 }}   // iOS: same, half the 36pt pin height
+                >
+                  <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
+                </Marker>
               ))}
             </MapView>
           </View>
 
           {/* PART 3: real artwork feed */}
-          <Text style={styles.demoMapNote}>Map pins are demonstration data, not actual creator addresses.</Text>
           <View style={styles.feedHeading}>
-            <Text style={styles.sectionTitle}>get inspired</Text>
+            <View style={styles.starTitle}>
+              <Image source={require('../../../assets/images/star.png')} style={styles.star} />
+              <Text style={styles.sectionTitle}>get inspired</Text>
+            </View>
             <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
-              <Ionicons name="refresh" size={21} color={colors.primary} />
+              <Ionicons name="refresh" size={21} color={colors.blue} />
             </TouchableOpacity>
           </View>
-          {date && <Text style={styles.feedNotice}>Date-based photo filtering will be available once booking availability is connected.</Text>}
           {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
           {feedError ? (
             <View style={styles.feedStatus}>
@@ -545,13 +529,14 @@ export default function ExploreCreator({ navigation }: any) {
             </View>
           )}
         </ScrollView>
+        <RefreshStar refreshing={pulling} y={40} />
 
         {/* Hold-and-drag overlay */}
         {drag && (
           <View style={styles.dragOverlay} pointerEvents="none">
             <DragBubble
               icon={favorites.has(drag.id) ? 'heart-dislike' : 'heart'}
-              label={favorites.has(drag.id) ? 'Manage saved boards' : 'Save to a board'}
+              label={favorites.has(drag.id) ? 'Edit' : 'Nail it'}
               x={drag.targets.fav.x}
               y={drag.targets.fav.y}
               hovered={hover === 'fav'}
@@ -573,27 +558,113 @@ export default function ExploreCreator({ navigation }: any) {
         )}
       </View>
 
-      {/* Service filter */}
-      {renderOptionModal(serviceModal, () => setServiceModal(false), 'Type of service', SERVICES, service, setService)}
+      {/* Filter menu: opened from the icon next to the search bar */}
+      <Modal visible={filterMenu} transparent animationType="slide" onRequestClose={() => setFilterMenu(false)}>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setFilterMenu(false)}>
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>Filters</Text>
+            {([
+              { icon: 'brush-outline', label: 'Service', value: services.length > 1 ? `${services.length} selected` : services[0] ?? null,
+                open: () => { setServiceDraft(services); setServiceModal(true); } },
+              { icon: 'cash-outline', label: 'Price', value: priceRange ? formatPriceRange(priceRange) : null,
+                open: () => { setPriceDraft(priceRange ?? FULL_PRICE_RANGE); setPriceModal(true); } },
+              { icon: 'calendar-outline', label: 'Date', value: date ? formatDate(date) : null, open: () => setDateOpen(true) },
+            ] as const).map(row => (
+              <TouchableOpacity key={row.label} style={styles.option} onPress={() => openFromFilterMenu(row.open)}>
+                <View style={styles.filterMenuLabel}>
+                  <Ionicons name={row.icon} size={18} color={colors.ink} />
+                  <Text style={styles.optionText}>{row.label}</Text>
+                </View>
+                <View style={styles.filterMenuLabel}>
+                  <Text style={[styles.optionText, row.value ? styles.optionActive : styles.filterMenuAny]}>
+                    {row.value ?? 'Any'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={16} color="#888" />
+                </View>
+              </TouchableOpacity>
+            ))}
+            {filtersActive ? (
+              <TouchableOpacity style={styles.clearFilters} onPress={clearFilters}>
+                <Text style={styles.clearFiltersText}>Clear filters</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
-      {/* Price filter */}
+      {/* Service filter: pick several, then Save */}
+      <Modal visible={serviceModal} transparent animationType="slide" onRequestClose={() => setServiceModal(false)}>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setServiceModal(false)}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={[styles.sheetTitle, { marginBottom: 0 }]}>Type of service</Text>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={() => {
+                  setServices(serviceDraft);
+                  setServiceModal(false);
+                }}
+              >
+                <Text style={styles.saveText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+            {SERVICES.map(opt => {
+              const active = serviceDraft.includes(opt);
+              return (
+                <TouchableOpacity
+                  key={opt}
+                  style={styles.option}
+                  onPress={() => setServiceDraft(d => active ? d.filter(x => x !== opt) : [...d, opt])}
+                >
+                  <Text style={[styles.optionText, active && styles.optionActive]}>{opt}</Text>
+                  {active && <Ionicons name="checkmark" size={20} color={colors.ink} />}
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[styles.option, { borderBottomWidth: 0 }]}
+              onPress={() => {
+                setServiceDraft([]); // stays open; Save applies it
+              }}
+            >
+              <Text style={[styles.optionText, styles.showAllText]}>remove selected filters</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Price filter: drag the slider, then Save */}
       <Modal visible={priceModal} transparent animationType="slide" onRequestClose={() => setPriceModal(false)}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setPriceModal(false)}>
           <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Price range</Text>
-            {PRICE_RANGES.map((r, i) => (
+            <View style={styles.sheetHeader}>
+              <Text style={[styles.sheetTitle, { marginBottom: 0 }]}>Price range</Text>
               <TouchableOpacity
-                key={r.label}
-                style={styles.option}
+                style={styles.saveButton}
                 onPress={() => {
-                  setPriceIdx(i);
+                  setPriceRange(isFullPriceRange(priceDraft) ? null : priceDraft);
                   setPriceModal(false);
                 }}
               >
-                <Text style={[styles.optionText, priceIdx === i && styles.optionActive]}>{r.label}</Text>
-                {priceIdx === i && <Ionicons name="checkmark" size={20} color={colors.danger} />}
+                <Text style={styles.saveText}>Save</Text>
               </TouchableOpacity>
-            ))}
+            </View>
+            <View style={styles.sliderWrap}>
+              <PriceRangeSlider
+                min={PRICE_MIN}
+                max={PRICE_MAX}
+                step={PRICE_STEP}
+                value={priceDraft}
+                onChange={setPriceDraft}
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.option, { borderBottomWidth: 0 }]}
+              onPress={() => setPriceDraft(FULL_PRICE_RANGE)} // stays open; Save applies it
+            >
+              <Text style={[styles.optionText, styles.anyPriceText, isFullPriceRange(priceDraft) && styles.optionBold]}>Any price</Text>
+              {isFullPriceRange(priceDraft) && <Ionicons name="checkmark" size={20} color={colors.blue} />}
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -609,7 +680,7 @@ export default function ExploreCreator({ navigation }: any) {
                 mode="date"
                 display="inline"
                 minimumDate={new Date()}
-                accentColor={colors.danger}
+                accentColor={colors.blue}
                 onChange={(_, d) => d && setDate(d)}
               />
               <View style={styles.dateButtons}>
@@ -754,59 +825,27 @@ function DragBubble({
   );
 }
 
-function FilterPill({
-  icon,
-  label,
-  active,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      style={[styles.pill, active && styles.pillActive]}
-      onPress={onPress}
-    >
-      <Ionicons name={icon} size={16} color={active ? '#fff' : '#444'} />
-      <Text style={[styles.pillText, active && { color: '#fff' }]}>{label}</Text>
-      <Ionicons name="chevron-down" size={14} color={active ? '#fff' : '#888'} />
-    </TouchableOpacity>
-  );
-}
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: colors.background },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginHorizontal: 16,
-    marginTop: 8,
+    flex: 1,
     paddingHorizontal: 14,
     height: 46,
     borderRadius: 23,
     backgroundColor: '#f2f2f2',
   },
-  searchInput: { flex: 1, fontSize: 16 },
-  filterRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 8, alignItems: 'center' },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
-  },
-  pillActive: { backgroundColor: colors.danger, borderColor: colors.danger },
-  pillText: { fontSize: 14, color: '#333', fontWeight: '500' },
-  clear: { paddingHorizontal: 8 },
-  clearText: { color: colors.danger, fontWeight: '600' },
+  searchInput: { flex: 1, fontSize: 16, color: colors.ink },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 12 },
+  filterButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#f2f2f2', alignItems: 'center', justifyContent: 'center' },
+  filterDot: { position: 'absolute', top: 10, right: 11, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },
+  filterMenuLabel: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  filterMenuAny: { color: '#888' },
+  clearFilters: { alignSelf: 'flex-start', paddingTop: 14 },
+  clearFiltersText: { color: colors.ink, fontSize: 15, fontWeight: '600' },
   mapHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -815,21 +854,24 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 10,
   },
-  sectionTitle: { fontSize: 20, fontWeight: '700' },
-  count: { color: '#888', fontSize: 14 },
+  sectionTitle: { fontSize: 20, fontFamily: fonts.title, color: colors.ink },
   mapWrap: { marginHorizontal: 16, borderRadius: 16, overflow: 'hidden', height: 280 },
   map: { flex: 1 },
+  mapPin: { width: 22, height: 36 },
   feed: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 12, gap: 8 },
   feedCol: { flex: 1, gap: 8 },
   tile: { borderRadius: 14, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   tileImage: { width: '100%', height: '100%' },
   feedHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 16, marginTop: 24 },
-  demoMapNote: { color: '#888', fontSize: 12, marginHorizontal: 16, marginTop: 8 },
-  feedNotice: { color: '#786B7A', fontSize: 13, marginHorizontal: 16, marginTop: 10 },
+  starTitle: { position: 'relative' },
+  // sits at the lower-left of the "g" in "get inspired", partly tucked behind it
+  star: { position: 'absolute', width: 44, height: 44, left: -12, top: -21.5 },
+  starsDouble: { position: 'absolute', width: 48, height: 47, right: -30, top: -22 },
+  feedNotice: { color: colors.ink, fontSize: 13, marginHorizontal: 16, marginTop: 10 },
   feedStatus: { marginHorizontal: 16, marginTop: 15, padding: 16, backgroundColor: '#FFF1F4', borderRadius: 12 },
   feedError: { color: '#A12339', fontSize: 13, lineHeight: 19 },
   retryText: { color: '#A12339', fontWeight: '700', marginTop: 10 },
-  feedEmpty: { color: '#716C83', fontSize: 14, marginHorizontal: 16, marginTop: 20, marginBottom: 28 },
+  feedEmpty: { color: colors.ink, fontSize: 14, marginHorizontal: 16, marginTop: 20, marginBottom: 28 },
   favBadge: {
     position: 'absolute',
     top: 8,
@@ -837,7 +879,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#fff',
+    backgroundColor: colors.pink,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -860,19 +902,19 @@ const styles = StyleSheet.create({
   },
   bubbleLabel: {
     position: 'absolute',
-    top: -40,
+    top: -30,
     width: 190,
     left: (TARGET_SIZE - 190) / 2,
     alignItems: 'center',
   },
   bubbleLabelText: {
-    backgroundColor: '#222',
-    color: '#fff',
-    fontSize: 13,
+    backgroundColor: colors.wine,
+    color: colors.pink,
+    fontSize: 11,
     fontWeight: '600',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
     overflow: 'hidden',
   },
   toast: {
@@ -887,13 +929,16 @@ const styles = StyleSheet.create({
   toastText: { color: '#fff', fontSize: 14, fontWeight: '500' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 36,
   },
-  sheetTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  sheetTitle: { fontSize: 18, fontFamily: fonts.title, color: colors.ink, marginBottom: 8 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  saveButton: { backgroundColor: colors.blue, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14 },
+  saveText: { color: colors.background, fontSize: 14, fontWeight: '600' },
   option: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -902,8 +947,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#ddd',
   },
+  showAllText: { fontStyle: 'italic', color: colors.blue },
+  anyPriceText: { color: colors.blue },
+  sliderWrap: { paddingTop: 12, paddingBottom: 18 },
+  optionBold: { fontWeight: '600' },
   optionText: { fontSize: 16 },
-  optionActive: { color: colors.danger, fontWeight: '600' },
+  optionActive: { color: colors.ink, fontWeight: '600' },
   dateButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -911,7 +960,7 @@ const styles = StyleSheet.create({
     gap: 20,
     marginTop: 8,
   },
-  cancel: { fontSize: 16, color: '#666' },
-  doneButton: { backgroundColor: colors.danger, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
-  doneText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  cancel: { fontSize: 16, color: colors.ink },
+  doneButton: { backgroundColor: colors.blue, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
+  doneText: { color: colors.background, fontSize: 16, fontWeight: '600' },
 });
