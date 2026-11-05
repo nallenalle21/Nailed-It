@@ -115,13 +115,13 @@ export default function LoginScreen() {
             style={[styles.roleBtn, role === 'user' && styles.activeRole]} 
             onPress={() => setRole('user')}
           >
-            <Text style={role === 'user' ? styles.activeText : styles.inactiveText}>Regular User</Text>
+            <Text style={role === 'user' ? styles.activeText : styles.inactiveText}>Customer</Text>
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.roleBtn, role === 'creator' && styles.activeRole]} 
             onPress={() => setRole('creator')}
           >
-            <Text style={role === 'creator' ? styles.activeText : styles.inactiveText}>Creator</Text>
+            <Text style={role === 'creator' ? styles.activeText : styles.inactiveText}>Freelancer</Text>
           </TouchableOpacity>
         </View>
       )}
