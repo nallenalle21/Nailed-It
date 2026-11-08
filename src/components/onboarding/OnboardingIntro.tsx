@@ -27,7 +27,6 @@ const PHOTO = {
 
 const LINES = [
   'tell us your vibe',
-  '…or what’s so not you',
   'we’ve got just the nail tech for you.',
   'your moodboard, but you can literally book the creator.',
 ];
@@ -50,17 +49,17 @@ const STICKERS: StickerDef[] = [
   { kind: 'photo', src: PHOTO.p01, x: 236, y: 96, w: 118, h: 134, r: 7, beat: 0 },
   { kind: 'star', x: 320, y: 262, w: 40, r: 0, beat: 0 },
   { kind: 'photo', src: PHOTO.p05, x: 22, y: 500, w: 136, h: 150, r: 6, beat: 0 },
-  { kind: 'photo', src: PHOTO.p03, x: 140, y: 168, w: 104, h: 120, r: -3, beat: 1 },
-  { kind: 'photo', src: PHOTO.p07, x: 214, y: 520, w: 150, h: 164, r: -6, beat: 1 },
-  { kind: 'pill', text: 'need this.', x: 30, y: 672, r: -5, beat: 1, bg: colors.pink, fg: colors.ink },
-  { kind: 'tech', x: 20, y: 262, r: -3, beat: 2 },
-  { kind: 'photo', src: PHOTO.p10, x: 262, y: 214, w: 96, h: 108, r: 5, beat: 2 },
-  { kind: 'photo', src: PHOTO.p06, x: 118, y: 628, w: 128, h: 146, r: 4, beat: 2 },
-  { kind: 'star', x: 58, y: 470, w: 28, r: 0, beat: 2 },
-  { kind: 'photo', src: PHOTO.p09, x: 264, y: 668, w: 112, h: 128, r: -4, beat: 3 },
-  { kind: 'pill', text: 'obsessed.', x: 238, y: 494, r: 6, beat: 3, bg: colors.background, fg: colors.ink },
-  { kind: 'booked', x: 150, y: 596, r: -3, beat: 3 },
-  { kind: 'pill', text: 'need these for saturday', x: 150, y: 42, r: -4, beat: 3, bg: colors.pink, fg: colors.ink },
+  { kind: 'photo', src: PHOTO.p03, x: 140, y: 168, w: 104, h: 120, r: -3, beat: 0 },
+  { kind: 'photo', src: PHOTO.p07, x: 214, y: 520, w: 150, h: 164, r: -6, beat: 0 },
+  { kind: 'pill', text: 'need this.', x: 30, y: 672, r: -5, beat: 0, bg: colors.pink, fg: colors.ink },
+  { kind: 'tech', x: 20, y: 262, r: -3, beat: 1 },
+  { kind: 'photo', src: PHOTO.p10, x: 262, y: 214, w: 96, h: 108, r: 5, beat: 1 },
+  { kind: 'photo', src: PHOTO.p06, x: 118, y: 628, w: 128, h: 146, r: 4, beat: 1 },
+  { kind: 'star', x: 58, y: 470, w: 28, r: 0, beat: 1 },
+  { kind: 'photo', src: PHOTO.p09, x: 264, y: 668, w: 112, h: 128, r: -4, beat: 2 },
+  { kind: 'pill', text: 'obsessed.', x: 238, y: 494, r: 6, beat: 2, bg: colors.background, fg: colors.ink },
+  { kind: 'booked', x: 150, y: 596, r: -3, beat: 2 },
+  { kind: 'pill', text: 'need these for saturday', x: 150, y: 42, r: -4, beat: 2, bg: colors.pink, fg: colors.ink },
 ];
 
 const LIGHT_PINK = '#fad2e1';
