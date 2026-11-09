@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler'; // must stay the very first import
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
@@ -15,6 +15,8 @@ import CustomerProfile from './src/screens/Chats/ChatCustomerProfile';
 
 import WorkLocations from './src/screens/Profile/Business/WorkLocations';
 import LoginScreen from './src/screens/Login/LoginScreen';
+import FreelancerIntro from './src/screens/Onboarding/FreelancerIntro';
+import CustomerIntro from './src/screens/Onboarding/CustomerIntro';
 import Certificates from './src/screens/Profile/Business/Certificates';
 import Bookkeeping from './src/screens/Profile/Business/Bookkeeping';
 
@@ -106,6 +108,9 @@ export default function App() {
   const [session, setSession] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Intro (freelancer or customer): shown right after logging in (not when the app reopens with a saved session).
+  const [showIntro, setShowIntro] = useState(false);
+  const hadSession = useRef(false);
   const [fontsLoaded] = useFonts({
     Horizon: require('./assets/fonts/Horizon.otf'),
   });
@@ -118,12 +123,20 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) hadSession.current = true;
       setSession(session);
       if (session?.user) fetchRole(session.user.id);
       else setLoading(false);
     });
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
+      const justLoggedIn = event === 'SIGNED_IN' && !hadSession.current;
+      hadSession.current = !!session;
+      if (justLoggedIn) {
+        setShowIntro(true);
+        setLoading(true); // wait for the role, so the right screens show straight away
+      }
+      if (!session) setShowIntro(false);
       setSession(session);
       if (session?.user) fetchRole(session.user.id);
       else setRole(null);
@@ -148,6 +161,11 @@ export default function App() {
             <Stack.Screen name="Login" component={LoginScreen} />
           ) : role === 'creator' ? (
             <Stack.Group>
+              {showIntro && (
+                <Stack.Screen name="FreelancerIntro" options={{ animation: 'fade' }}>
+                  {() => <FreelancerIntro onGetStarted={() => setShowIntro(false)} />}
+                </Stack.Screen>
+              )}
               <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
               <Stack.Screen name="BusinessCreator" component={BusinessCreator} />
               <Stack.Screen name="ServicesAndPrices" component={ServicesAndPrices} />
@@ -161,6 +179,11 @@ export default function App() {
             </Stack.Group>
           ) : (
             <Stack.Group>
+              {showIntro && (
+                <Stack.Screen name="CustomerIntro" options={{ animation: 'fade' }}>
+                  {() => <CustomerIntro onGetStarted={() => setShowIntro(false)} />}
+                </Stack.Screen>
+              )}
               <Stack.Screen name="UserTabs" component={UserTabs} />
               <Stack.Screen
                 name="ChatRoom"
