@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
 import { colors, fonts } from '../theme';
 import { handle } from '../utils/handle';
+import { syncBookingReminders } from '../services/reminders';
 import { HIDDEN_SPINNER, RefreshStar } from './SparkleStars';
 
 const STAR = require('../../assets/images/star.png');
@@ -160,6 +161,8 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
         }
       }
       onBooked(appointment);
+      // Schedule the 36 h / 2 h reminders. The first booking is when we ask for permission.
+      void syncBookingReminders({ askPermission: true });
     } catch (e) {
       Alert.alert('Could not book', errorMessage(e));
       setReloadKey((n) => n + 1);

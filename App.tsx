@@ -1,14 +1,21 @@
 import 'react-native-gesture-handler'; // must stay the very first import
 import { useEffect, useState } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+import * as Notifications from 'expo-notifications';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { supabase } from './src/services/supabase';
 import { colors, fonts } from './src/theme';
+import {
+  clearBookingReminders,
+  configureNotifications,
+  isBookingReminder,
+  syncBookingReminders,
+} from './src/services/reminders';
 
 import ChatRoom from './src/screens/Chats/ChatRoom';
 import CustomerProfile from './src/screens/Chats/ChatCustomerProfile';
@@ -36,6 +43,10 @@ import ProfileUser from './src/screens/Profile/ProfileUser';
 
 
 const Tab = createBottomTabNavigator();
+const navigationRef = createNavigationContainerRef<any>();
+
+// Booking reminders show as a banner even while the app is open.
+configureNotifications();
 
 // Bottom menu: HORIZON labels (small), black when selected, softer black otherwise.
 const TAB_BAR_STYLE = {
@@ -123,12 +134,50 @@ export default function App() {
       else setLoading(false);
     });
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (session?.user) fetchRole(session.user.id);
       else setRole(null);
+      // Someone else might log in on this phone next: don't keep this user's reminders.
+      if (event === 'SIGNED_OUT') void clearBookingReminders();
     });
   }, []);
+
+  // Booking reminders (customers only): re-sync from Supabase when the app opens and
+  // every time it comes back to the foreground, so cancelled/moved bookings are updated.
+  const isCustomer = !!session && role !== null && role !== 'creator';
+  useEffect(() => {
+    if (!isCustomer) return;
+    void syncBookingReminders();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncBookingReminders();
+    });
+    return () => sub.remove();
+  }, [isCustomer]);
+
+  // Tapping a reminder opens the Calendar tab.
+  const openCalendar = () => {
+    if (navigationRef.isReady()) navigationRef.navigate('UserTabs', { screen: 'Calendar' });
+  };
+  useEffect(() => {
+    if (!isCustomer) return;
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      if (isBookingReminder(response)) openCalendar();
+    });
+    return () => sub.remove();
+  }, [isCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The app was closed and opened by tapping a reminder.
+  const handleNavigationReady = () => {
+    if (!isCustomer) return;
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        // Only a tap from the last few minutes, not an old one from an earlier launch.
+        const fresh = response && Date.now() - response.notification.date < 10 * 60 * 1000;
+        if (fresh && isBookingReminder(response)) openCalendar();
+      })
+      .catch(() => {});
+  };
 
   if (loading || !fontsLoaded) {
     return (
@@ -142,7 +191,7 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef} onReady={handleNavigationReady}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           {!session ? (
             <Stack.Screen name="Login" component={LoginScreen} />
