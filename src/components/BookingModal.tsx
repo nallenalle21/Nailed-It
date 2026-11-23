@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
 import { colors, fonts } from '../theme';
 import { handle } from '../utils/handle';
+import { syncBookingReminders } from '../services/reminders';
 import { HIDDEN_SPINNER, RefreshStar } from './SparkleStars';
 import {
   availableDates,
@@ -171,6 +172,8 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
       // A request waiting for approval isn't a booking yet: it can be added from the Calendar once accepted.
       if (addToCalendar && appointment.status === 'confirmed') await addAppointmentToCalendar(appointment, 'customer');
       onBooked(appointment);
+      // Schedule the 36 h / 2 h reminders. The first booking is when we ask for permission.
+      void syncBookingReminders({ askPermission: true });
     } catch (e) {
       Alert.alert('Could not book', errorMessage(e));
       setReloadKey((n) => n + 1); // reloads the times and asks for a fresh quote

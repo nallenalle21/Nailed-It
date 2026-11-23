@@ -38,6 +38,13 @@
         {
           "calendarPermission": "Nailed It adds your bookings to your calendar when you ask it to."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FA89AB",
+          "enableRemoteNotifications": false
+        }
       ]
     ],
     "extra": {

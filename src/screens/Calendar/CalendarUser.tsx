@@ -21,6 +21,7 @@ import { bookedMessage, canCancel, cancelAppointment, fetchMyAppointments, forma
 import BookingModal from '../../components/BookingModal';
 import BookingDetailsModal from '../../components/BookingDetailsModal';
 import ReasonDialog from '../../components/ReasonDialog';
+import { syncBookingReminders } from '../../services/reminders';
 
 const STAR = require('../../../assets/images/star.png');
 
@@ -294,6 +295,7 @@ export default function CalendarUser() {
             setCancelBusyId(a.id);
             try {
               await cancelAppointment(a.id, reason);
+              void syncBookingReminders(); // drop its 36 h / 2 h reminders
             } catch (e: any) {
               Alert.alert('Could not cancel', e instanceof Error ? e.message : String(e?.message ?? e));
             } finally {
