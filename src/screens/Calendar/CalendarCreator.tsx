@@ -510,6 +510,9 @@ export default function CalendarCreator() {
                   <Text style={styles.slotCustomer}>
                     {a.customer_name} · {a.total_minutes} min · {formatKr(a.total_price)}
                   </Text>
+                  {a.customer_note ? (
+                    <Text style={styles.slotNote}>“{a.customer_note}”</Text>
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -653,6 +656,7 @@ const styles = StyleSheet.create({
   slotText: { fontSize: 16, fontWeight: '600' },
   slotService: { fontSize: 14, color: colors.inkMuted, marginTop: 2 },
   slotCustomer: { fontSize: 13, color: colors.blue, fontWeight: '600', marginTop: 4 },
+  slotNote: { fontSize: 13, color: colors.ink, fontStyle: 'italic', marginTop: 4 }, // customer's comment
   slotActions: {
     position: 'absolute',
     top: 0,

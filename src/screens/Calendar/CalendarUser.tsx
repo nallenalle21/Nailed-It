@@ -4,7 +4,7 @@ import StarredTitle from '../../components/StarredTitle';
 import { handle } from '../../utils/handle';
 
 const STAR = require('../../../assets/images/star.png');
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
 import {
@@ -14,10 +14,13 @@ import {
   StyleSheet,
   RefreshControl,
   Image,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
+import BookingModal from '../../components/BookingModal';
+import BookingDetailsModal from '../../components/BookingDetailsModal';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
@@ -37,6 +40,9 @@ const longLabel = (key: string) => {
 };
 const hhmm = (t: string) => t.slice(0, 5);
 
+// How many nail techs to show under "Book Again".
+const BOOK_AGAIN_MAX = 3;
+
 export default function CalendarUser() {
   // Pull down to refresh: spinning star instead of the system spinner.
   const pull = useStarRefresh();
@@ -50,6 +56,18 @@ export default function CalendarUser() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  // "Book again": opens the booking with the same nail tech and services ticked.
+  const [rebook, setRebook] = useState<Appointment | null>(null);
+  // "View": the booking card with service, nail tech, time, place and comment.
+  const [viewing, setViewing] = useState<Appointment | null>(null);
+  const navigation = useNavigation<any>();
+
+  // Same as Explore: the public profile lives in the Vendors tab.
+  const goToProfile = (vendorId: string) => {
+    setViewing(null);
+    navigation.navigate('Vendors', { screen: 'VendorProfile', params: { vendorId } });
+  };
 
   // Reload on focus so a freshly confirmed booking shows up.
   useFocusEffect(useCallback(() => {
@@ -63,7 +81,15 @@ export default function CalendarUser() {
       .catch((e) => active && setLoadError(e instanceof Error ? e.message : String(e?.message ?? e)))
       .finally(() => { if (active) setLoading(false); pull.doneLoading(); });
     return () => { active = false; };
-  }, [pull.refreshKey])); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pull.refreshKey, reloadKey])); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Latest booking with each nail tech (newest first), including ones just booked.
+  const bookAgain: Appointment[] = [];
+  for (const a of [...appointments].sort((x, y) =>
+    y.appointment_date.localeCompare(x.appointment_date) || y.start_time.localeCompare(x.start_time))) {
+    if (bookAgain.length === BOOK_AGAIN_MAX) break;
+    if (!bookAgain.some((b) => b.creator_id === a.creator_id)) bookAgain.push(a);
+  }
 
   const nextUp =
     appointments
@@ -111,6 +137,25 @@ export default function CalendarUser() {
             </Text>
           )}
         </View>
+
+        {/* Book again: your latest booking with each nail tech */}
+        {bookAgain.length > 0 && (
+          <View style={styles.againSection}>
+            <Text style={styles.slotsTitle}>Book Again</Text>
+            {bookAgain.map((a) => (
+              <View key={a.id} style={styles.againRow}>
+                <Ionicons name="refresh" size={18} color={colors.ink} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.slotText} numberOfLines={1}>{handle(a.creator_name)}</Text>
+                  <Text style={styles.slotService} numberOfLines={1}>{a.services.map((s) => s.name).join(', ')}</Text>
+                </View>
+                <TouchableOpacity style={styles.againButton} onPress={() => setRebook(a)} accessibilityLabel={`Book ${handle(a.creator_name)} again`}>
+                  <Text style={styles.againButtonText}>Book Again</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Month switcher */}
         <View style={styles.monthRow}>
@@ -190,12 +235,32 @@ export default function CalendarUser() {
                   <Text style={styles.slotService}>{a.services.map((s) => s.name).join(', ')}</Text>
                   <Text style={styles.slotService}>{a.total_minutes} min · {formatKr(a.total_price)}</Text>
                 </View>
+                <TouchableOpacity style={styles.againButton} onPress={() => setViewing(a)} accessibilityLabel="View booking">
+                  <Text style={styles.againButtonText}>View</Text>
+                </TouchableOpacity>
               </View>
             </View>
           ))}
         </View>
       </ScrollView>
       <RefreshStar refreshing={pull.refreshing} y={120} />
+
+      <BookingDetailsModal
+        appointment={viewing}
+        onClose={() => setViewing(null)}
+        onViewProfile={goToProfile}
+      />
+      <BookingModal
+        visible={rebook !== null}
+        creator={rebook ? { id: rebook.creator_id, name: rebook.creator_name } : null}
+        initialServiceIds={rebook?.services.map((s) => s.id) ?? null}
+        onClose={() => setRebook(null)}
+        onBooked={() => {
+          setRebook(null);
+          setReloadKey((n) => n + 1);
+          Alert.alert('Appointment booked', 'You can find it in your Calendar.');
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -274,6 +339,10 @@ const styles = StyleSheet.create({
   titleDot: { fontFamily: fonts.regular, fontWeight: 'normal', color: colors.ink },
   empty: { color: colors.inkMuted, paddingVertical: 8 },
   slotWrap: { marginBottom: 10, paddingTop: 8 },
+  againSection: { marginHorizontal: 16, marginBottom: 12, gap: 8 },
+  againRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: colors.pinkTint },
+  againButton: { backgroundColor: colors.pink, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  againButtonText: { color: colors.wine, fontSize: 14, fontWeight: '700' },
   slot: {
     flexDirection: 'row',
     alignItems: 'center',

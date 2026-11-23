@@ -34,6 +34,8 @@ export type Appointment = {
   total_price: number | string;
   services: { id: string; name: string; duration_minutes: number; price: number }[];
   status: 'confirmed' | 'cancelled';
+  /** The customer's comment from the booking screen (see supabase/booking_details.sql). */
+  customer_note?: string | null;
 };
 
 export const START_STEP_MINUTES = 15;
@@ -48,8 +50,9 @@ export const effectivePrice = (s: Pick<CreatorService, 'price' | 'discount_price
   Number(s.discount_price ?? s.price);
 
 const SERVICE_COLUMNS = 'id, user_id, name, category, duration_minutes, price, discount_price';
-const APPOINTMENT_COLUMNS =
-  'id, creator_id, customer_id, creator_name, customer_name, appointment_date, start_time, end_time, total_minutes, total_price, services, status';
+// All columns, so customer_note is included once it has been added in Supabase
+// (and nothing breaks before that).
+const APPOINTMENT_COLUMNS = '*';
 
 export async function fetchCreatorServices(creatorId: string): Promise<CreatorService[]> {
   const { data, error } = await supabase
@@ -145,6 +148,19 @@ export async function bookAppointment(
   });
   if (error) throw error;
   return data as Appointment;
+}
+
+/** Saves the customer's comment on their own booking. */
+export async function saveAppointmentNote(appointmentId: string, note: string): Promise<void> {
+  const { error } = await supabase.rpc('set_appointment_note', { p_id: appointmentId, p_note: note });
+  if (error) throw error;
+}
+
+/** The freelancer's studio address from Business → Work Locations, or null if none is set. */
+export async function fetchStudioAddress(creatorId: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('get_studio_address', { p_creator: creatorId });
+  if (error) throw error;
+  return (data as string | null) ?? null;
 }
 
 /** Confirmed appointments where the signed-in user is the customer or the creator (RLS-scoped). */

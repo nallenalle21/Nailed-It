@@ -3,11 +3,13 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -27,6 +29,7 @@ import {
   fetchSchedule,
   formatKr,
   quoteBooking,
+  saveAppointmentNote,
   startTimesForDay,
   toDateKey,
   type Appointment,
@@ -49,11 +52,13 @@ type Props = {
   visible: boolean;
   creator: { id: string; name: string } | null;
   initialDate?: string | null;
+  /** Services to tick from the start, e.g. from "book again". Ones no longer offered are skipped. */
+  initialServiceIds?: string[] | null;
   onClose: () => void;
   onBooked: (appointment: Appointment) => void;
 };
 
-export default function BookingModal({ visible, creator, initialDate, onClose, onBooked }: Props) {
+export default function BookingModal({ visible, creator, initialDate, initialServiceIds, onClose, onBooked }: Props) {
   const [services, setServices] = useState<CreatorService[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,6 +67,7 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
   const [date, setDate] = useState<string | null>(null);
   const [start, setStart] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  const [note, setNote] = useState(''); // optional comment to the nail tech
   const [quote, setQuote] = useState<BookingQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -69,6 +75,9 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
   // Pull-to-refresh reloads quietly (keeps the choices on screen) and shows the spinning star.
   const quietReload = useRef(false);
   const [pulling, setPulling] = useState(false);
+  // Read when the services have loaded (kept out of the effect below so it doesn't reload).
+  const presetServices = useRef(initialServiceIds);
+  presetServices.current = initialServiceIds;
 
   const creatorId = creator?.id ?? null;
 
@@ -90,6 +99,9 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
         // Nothing is pre-selected: keep the user's own pick on refresh, otherwise only the date
         // already chosen in Explore's date filter (if any).
         setDate((prev) => (prev && dates.includes(prev) ? prev : initialDate && dates.includes(initialDate) ? initialDate : null));
+        // "Book again": tick the same services as last time, if the creator still offers them.
+        const preset = (presetServices.current ?? []).filter((id) => svc.some((s) => s.id === id));
+        if (preset.length) setSelected((prev) => (prev.length ? prev : preset));
       })
       .catch((e) => active && setLoadError(errorMessage(e)))
       .finally(() => { if (active) { setLoading(false); setPulling(false); } });
@@ -101,6 +113,7 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
       setDate(null);
       setStart(null);
       setSelected([]);
+      setNote('');
       setQuote(null);
     }
   }, [visible]);
@@ -136,6 +149,16 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
     setSubmitting(true);
     try {
       const appointment = await bookAppointment(creatorId, date, start, selected);
+      const comment = note.trim();
+      if (comment) {
+        // The booking is already made; a failed comment shouldn't undo it.
+        try {
+          await saveAppointmentNote(appointment.id, comment);
+          appointment.customer_note = comment;
+        } catch (e) {
+          console.warn('[BookingModal] Could not save comment:', errorMessage(e));
+        }
+      }
       onBooked(appointment);
     } catch (e) {
       Alert.alert('Could not book', errorMessage(e));
@@ -153,6 +176,7 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
       {/* A Modal is a separate native window, so it needs its own safe-area provider. */}
       <SafeAreaProvider>
       <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.close} onPress={onClose} hitSlop={16} accessibilityLabel="Close">
             <Ionicons name="close" size={28} color={colors.ink} />
@@ -173,6 +197,7 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
         ) : (
           <ScrollView
             contentContainerStyle={{ paddingBottom: 24 }}
+            keyboardShouldPersistTaps="handled"
             refreshControl={
               <RefreshControl
                 refreshing={pulling}
@@ -225,6 +250,17 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
                 );
               })
             )}
+
+            <SectionTitle label="4. comment (optional)" done={note.trim().length > 0} />
+            <TextInput
+              style={styles.noteInput}
+              placeholder="e.g. red stars, short almond shape"
+              placeholderTextColor={colors.inkMuted}
+              value={note}
+              onChangeText={setNote}
+              multiline
+              maxLength={300}
+            />
           </ScrollView>
         )}
 
@@ -246,6 +282,7 @@ export default function BookingModal({ visible, creator, initialDate, onClose, o
             {submitting ? <ActivityIndicator color={colors.wine} /> : <Text style={styles.confirmText}>Confirm booking</Text>}
           </TouchableOpacity>
         </View>
+      </KeyboardAvoidingView>
       </SafeAreaView>
       </SafeAreaProvider>
     </Modal>
@@ -298,5 +335,6 @@ const styles = StyleSheet.create({
   link: { color: colors.ink, fontWeight: '700', marginTop: 10 },
   confirm: { backgroundColor: colors.pink, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   confirmDisabled: { opacity: 0.4 },
+  noteInput: { marginHorizontal: 16, minHeight: 80, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#ddd', fontSize: 15, color: colors.ink, textAlignVertical: 'top' },
   confirmText: { color: colors.wine, fontSize: 16, fontWeight: '700' },
 });
