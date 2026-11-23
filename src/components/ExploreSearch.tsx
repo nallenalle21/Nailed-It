@@ -190,7 +190,8 @@ function ResultRow({ creator: c, onPress, onRemove }: { creator: CreatorSearchRe
         )}
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.name} numberOfLines={1}>@{c.username}</Text>
+        <Text style={styles.name} numberOfLines={1}>{c.displayName ?? `@${c.username}`}</Text>
+        {c.displayName ? <Text style={styles.details} numberOfLines={1}>@{c.username}</Text> : null}
         {details ? <Text style={styles.details} numberOfLines={1}>{details}</Text> : null}
       </View>
       {onRemove ? (

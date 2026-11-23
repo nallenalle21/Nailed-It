@@ -40,6 +40,15 @@ import CalendarUser from './src/screens/Calendar/CalendarUser';
 import ChatsUser from './src/screens/Chats/ChatsUser';
 import ProfileUser from './src/screens/Profile/ProfileUser';
 import Settings from './src/screens/Profile/Settings';
+import Insights from './src/screens/Profile/Business/Insights';
+import FreelancerOnboarding from './src/screens/Onboarding/FreelancerOnboarding';
+import AboutEdit from './src/screens/Profile/Edit/AboutEdit';
+import PauseEdit from './src/screens/Profile/Edit/PauseEdit';
+import OffersEdit from './src/screens/Profile/Edit/OffersEdit';
+import AccessibilityEdit from './src/screens/Profile/Edit/AccessibilityEdit';
+import ScheduleEdit from './src/screens/Profile/Edit/ScheduleEdit';
+import BookingRulesEdit from './src/screens/Profile/Edit/BookingRulesEdit';
+import NotificationsEdit from './src/screens/Profile/Edit/NotificationsEdit';
 import FAQ from './src/screens/Profile/FAQ';
 
 
@@ -117,14 +126,17 @@ function UserTabs() {
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
+  // Freelancers start in the onboarding until their profile is live (all required steps done).
+  const [creatorLive, setCreatorLive] = useState(true);
   const [loading, setLoading] = useState(true);
   const [fontsLoaded] = useFonts({
     Horizon: require('./assets/fonts/Horizon.otf'),
   });
 
   const fetchRole = async (userId: string) => {
-    const { data } = await supabase.from('profiles').select('role').eq('id', userId).single();
+    const { data } = await supabase.from('profiles').select('role, is_live').eq('id', userId).single();
     setRole(data?.role || 'user');
+    setCreatorLive(data?.is_live ?? true);
     setLoading(false);
   };
 
@@ -193,28 +205,41 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <NavigationContainer ref={navigationRef} onReady={handleNavigationReady}>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Navigator
+          screenOptions={{ headerShown: false }}
+          initialRouteName={session && role === 'creator' && !creatorLive ? 'Onboarding' : undefined}
+        >
           {!session ? (
             <Stack.Screen name="Login" component={LoginScreen} />
           ) : role === 'creator' ? (
             <Stack.Group>
               <Stack.Screen name="CreatorTabs" component={CreatorTabs} />
+              <Stack.Screen name="Onboarding" component={FreelancerOnboarding} options={{ gestureEnabled: false }} />
               <Stack.Screen name="BusinessCreator" component={BusinessCreator} />
               <Stack.Screen name="ServicesAndPrices" component={ServicesAndPrices} />
               <Stack.Screen name="WorkLocations" component={WorkLocations} />
               <Stack.Screen name="Certificates" component={Certificates} />
               <Stack.Screen name="Bookkeeping" component={Bookkeeping} />
+              <Stack.Screen name="Insights" component={Insights} />
               <Stack.Screen name="CustomerProfile" component={CustomerProfile} />
               <Stack.Screen name="CalendarCreator" component={CalendarCreator} options={{ headerShown: false }} />
               <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
               <Stack.Screen name="VendorProfile" component={VendorProfile} options={{ headerShown: false }} />
               <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'creator' }} />
+              <Stack.Screen name="EditAbout" component={AboutEdit} />
+              <Stack.Screen name="EditPause" component={PauseEdit} />
+              <Stack.Screen name="EditOffers" component={OffersEdit} />
+              <Stack.Screen name="EditAccessibility" component={AccessibilityEdit} />
+              <Stack.Screen name="EditSchedule" component={ScheduleEdit} />
+              <Stack.Screen name="EditBookingRules" component={BookingRulesEdit} />
+              <Stack.Screen name="EditNotifications" component={NotificationsEdit} initialParams={{ role: 'creator' }} />
               <Stack.Screen name="FAQ" component={FAQ} />
             </Stack.Group>
           ) : (
             <Stack.Group>
               <Stack.Screen name="UserTabs" component={UserTabs} />
               <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'user' }} />
+              <Stack.Screen name="EditNotifications" component={NotificationsEdit} initialParams={{ role: 'user' }} />
               <Stack.Screen name="FAQ" component={FAQ} />
               <Stack.Screen
                 name="ChatRoom"

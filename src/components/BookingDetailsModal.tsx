@@ -170,7 +170,9 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
                 <ActivityIndicator color={colors.wine} />
               ) : (
                 <Text style={[styles.infoText, !place && styles.muted]}>
-                  {place ?? 'No address yet. Ask your nail tech in chat.'}
+                  {place ?? (a.status === 'confirmed'
+                    ? 'No address yet. Ask your nail tech in chat.'
+                    : 'For safety, the exact address is shared once your booking is confirmed.')}
                 </Text>
               )}
             </View>

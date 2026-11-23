@@ -7,12 +7,13 @@ import { vendorCity } from '../data/vendorCities';
 export type CreatorSearchResult = {
   id: string;
   username: string;
+  displayName: string | null;
   avatarUrl: string | null;
   city: string | null;
   fromPrice: number | null;
 };
 
-type Row = { id: string; username: string; avatar_path: string | null; city: string | null; from_price: number | string | null };
+type Row = { id: string; username: string; display_name: string | null; avatar_path: string | null; city: string | null; from_price: number | string | null };
 
 /** Freelancers whose username contains the text, best matches first. A leading "@" is ignored. */
 export async function searchCreators(query: string, limit = 20): Promise<CreatorSearchResult[]> {
@@ -21,6 +22,7 @@ export async function searchCreators(query: string, limit = 20): Promise<Creator
   return ((data ?? []) as Row[]).map((r) => ({
     id: r.id,
     username: r.username,
+    displayName: r.display_name?.trim() || null,
     avatarUrl: r.avatar_path ? avatarPublicUrl(r.avatar_path) : null,
     city: r.city ?? vendorCity(r.username),
     fromPrice: r.from_price === null ? null : Number(r.from_price),

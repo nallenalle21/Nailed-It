@@ -55,7 +55,8 @@ export type Appointment = {
   cancel_reason?: string | null;
 };
 
-export type AppointmentStatus = 'pending' | 'confirmed' | 'declined' | 'expired' | 'cancelled';
+/** 'no_show' = the freelancer marked that the client didn't come (see supabase/business_insights.sql). */
+export type AppointmentStatus = 'pending' | 'confirmed' | 'declined' | 'expired' | 'cancelled' | 'no_show';
 
 /** A pending request past its expiry (the server expires it within a few minutes). */
 export const isRequestExpired = (a: Appointment, now = new Date()) =>

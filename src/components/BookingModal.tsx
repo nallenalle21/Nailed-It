@@ -56,11 +56,13 @@ type Props = {
   initialDate?: string | null;
   /** Services to tick from the start, e.g. from "book again". Ones no longer offered are skipped. */
   initialServiceIds?: string[] | null;
+  /** Start time to pick from the start (with initialDate), e.g. a free time tapped in Explore. */
+  initialStart?: string | null;
   onClose: () => void;
   onBooked: (appointment: Appointment) => void;
 };
 
-export default function BookingModal({ visible, creator, initialDate, initialServiceIds, onClose, onBooked }: Props) {
+export default function BookingModal({ visible, creator, initialDate, initialServiceIds, initialStart, onClose, onBooked }: Props) {
   const [services, setServices] = useState<CreatorService[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,7 +80,8 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
   const [pulling, setPulling] = useState(false);
   // Read when the services have loaded (kept out of the effect below so it doesn't reload).
   const presetServices = useRef(initialServiceIds);
-  useEffect(() => { presetServices.current = initialServiceIds; });
+  const presetStart = useRef(initialStart);
+  useEffect(() => { presetServices.current = initialServiceIds; presetStart.current = initialStart; });
 
   const creatorId = creator?.id ?? null;
 
@@ -116,6 +119,11 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
         // "Book again": tick the same services as last time, if the creator still offers them.
         const preset = (presetServices.current ?? []).filter((id) => svc.some((s) => s.id === id));
         if (preset.length) setSelected((prev) => (prev.length ? prev : preset));
+        // A free time tapped in Explore: pick it, if it is still free.
+        const wantedStart = presetStart.current;
+        if (wantedStart && initialDate && startTimesForDay(sched, initialDate).includes(wantedStart)) {
+          setStart((prev) => prev ?? wantedStart);
+        }
       })
       .catch((e) => active && setLoadError(errorMessage(e)))
       .finally(() => { if (active) { setLoading(false); setPulling(false); } });

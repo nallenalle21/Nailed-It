@@ -21,7 +21,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { canCancel, cancelAppointment, fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
+import { appointmentStart, canCancel, cancelAppointment, fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
+import { markNoShow } from '../../services/insights';
 import { addAppointmentToCalendar } from '../../services/deviceCalendar';
 import { fetchBookingFlow, markBookingsSeen, respondToRequest } from '../../services/bookingRequests';
 import BookingFlow from '../../components/BookingFlow';
@@ -152,7 +153,7 @@ export default function CalendarCreator() {
             .order('start_time'),
           // A missing appointments table must not stop the availability calendar from loading.
           // Pending requests hold their time, so they are loaded too.
-          fetchMyAppointments('creator', ['confirmed', 'pending']).catch((e) => {
+          fetchMyAppointments('creator', ['confirmed', 'pending', 'no_show']).catch((e) => {
             console.warn('[Calendar] Could not load appointments:', e);
             return [] as Appointment[];
           }),
@@ -271,6 +272,26 @@ export default function CalendarCreator() {
     }
   };
 
+  /** A past booking the client didn't come to (counts as money lost in Insights), or undo that. */
+  const setNoShow = (a: Appointment, noShow: boolean) => {
+    const run = async () => {
+      setBusyRequestId(a.id);
+      try {
+        await markNoShow(a.id, noShow);
+      } catch (e) {
+        Alert.alert('Could not update', getErrorMessage(e, 'Please try again.'));
+      } finally {
+        setBusyRequestId(null);
+        setReloadKey((n) => n + 1);
+      }
+    };
+    if (!noShow) { void run(); return; }
+    Alert.alert('Mark as no-show?', `${handle(a.customer_name)} didn’t come to this booking. It counts as money lost in your Insights. You can undo it.`, [
+      { text: 'Back', style: 'cancel' },
+      { text: 'Mark no-show', style: 'destructive', onPress: () => void run() },
+    ]);
+  };
+
   const cancelBooking = async (a: Appointment, reason: string) => {
     setBusyRequestId(a.id);
     try {
@@ -303,7 +324,7 @@ export default function CalendarCreator() {
       end: a.end_time.slice(0, 5),
       title: handle(a.customer_name),
       subtitle: a.services.map((sv) => sv.name).join(', '),
-      kind: a.status === 'pending' ? ('request' as const) : ('booked' as const),
+      kind: a.status === 'pending' ? ('request' as const) : a.status === 'no_show' ? ('inactive' as const) : ('booked' as const),
     })),
     ...bookedSlots.map((slot) => ({
       id: slot.id, date: slot.date, start: slot.start, end: slot.end,
@@ -368,7 +389,20 @@ export default function CalendarCreator() {
     }
     // Android shows at most three buttons; tapping outside closes it there.
     const close: AlertButton[] = Platform.OS === 'ios' ? [{ text: 'Close', style: 'cancel' }] : [];
-    const buttons: AlertButton[] = a.status === 'pending'
+    const started = appointmentStart(a) <= new Date();
+    const buttons: AlertButton[] = a.status === 'no_show'
+      ? [
+          { text: 'Undo no-show', onPress: () => setNoShow(a, false) },
+          { text: 'Chat', onPress: () => openChat(a) },
+          ...close,
+        ]
+      : a.status === 'confirmed' && started
+      ? [
+          { text: 'Mark as no-show…', style: 'destructive', onPress: () => setNoShow(a, true) },
+          { text: 'Chat', onPress: () => openChat(a) },
+          ...close,
+        ]
+      : a.status === 'pending'
       ? [
           { text: 'Accept', onPress: () => void answerRequest(a, true) },
           { text: 'Decline…', style: 'destructive', onPress: () => setCancelling(a) },
@@ -652,6 +686,19 @@ export default function CalendarCreator() {
                   {a.status === 'pending' && (
                     <Text style={styles.slotRequest}>Request · waiting for your answer</Text>
                   )}
+                  {a.status === 'no_show' && (
+                    <View style={styles.noShowRow}>
+                      <Text style={styles.slotRequest}>No-show</Text>
+                      <TouchableOpacity onPress={() => setNoShow(a, false)} hitSlop={8} disabled={busyRequestId === a.id}>
+                        <Text style={styles.noShowLink}>Undo</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {a.status === 'confirmed' && appointmentStart(a) <= new Date() && (
+                    <TouchableOpacity onPress={() => setNoShow(a, true)} hitSlop={8} disabled={busyRequestId === a.id}>
+                      <Text style={styles.noShowLink}>Didn’t show up? Mark no-show</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
               <View style={styles.slotActions}>
@@ -801,6 +848,8 @@ const styles = StyleSheet.create({
   slotCustomer: { fontSize: 13, color: colors.blue, fontWeight: '600', marginTop: 4 },
   slotNote: { fontSize: 13, color: colors.ink, fontStyle: 'italic', marginTop: 4 }, // customer's comment
   slotRequest: { fontSize: 13, color: colors.wine, fontWeight: '700', marginTop: 4 },
+  noShowRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  noShowLink: { fontSize: 13, color: colors.inkMuted, textDecorationLine: 'underline', marginTop: 4 },
   slotActions: {
     position: 'absolute',
     top: 0,

@@ -1,6 +1,8 @@
 import type React from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { getMyOnboarding, type Onboarding } from '../../services/onboarding';
 import { handle } from '../../utils/handle';
 import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';
@@ -25,6 +27,8 @@ import { supabase } from '../../services/supabase';
 import { listVendorPosts, uploadVendorPost, reorderVendorPosts, deleteVendorPost, publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl, uploadVendorAvatar } from '../../services/vendorAvatar';
 
+const SETUP_STEPS = 5;
+
 // Portfolio photos are stored in Supabase Storage and indexed by vendor_posts.
 type PortfolioPhoto = VendorPost & { uri: string };
 
@@ -37,6 +41,13 @@ const MAX_PHOTOS = 9;
 const GRID_GAP = 4;
 
 export default function ProfileCreator({ navigation }: any) {
+  // Setup progress: until it's complete the profile is hidden from customers.
+  const [setup, setSetup] = useState<Onboarding | null>(null);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    getMyOnboarding().then((o) => { if (active) setSetup(o); }).catch(() => {});
+    return () => { active = false; };
+  }, []));
   // Pull down to refresh: spinning star instead of the system spinner.
   const pull = useStarRefresh();
   const [profile, setProfile] = useState<any>(null);
@@ -328,6 +339,20 @@ export default function ProfileCreator({ navigation }: any) {
           <Text style={styles.subtitle}>{[profile?.email, profile?.city].filter(Boolean).join(' · ')}</Text>
         </View>
 
+        {setup && !setup.completed && (
+          <TouchableOpacity style={styles.setupBanner} onPress={() => navigation.navigate('Onboarding')} accessibilityRole="button">
+            <Ionicons name="eye-off-outline" size={22} color={colors.wine} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.setupTitle}>Your profile is hidden from customers</Text>
+              <Text style={styles.setupText}>Finish your setup to go live · {Math.min(setup.step, SETUP_STEPS)} of {SETUP_STEPS} steps done</Text>
+              <View style={styles.setupTrack}>
+                <View style={[styles.setupFill, { width: `${(Math.min(setup.step, SETUP_STEPS) / SETUP_STEPS) * 100}%` }]} />
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.wine} />
+          </TouchableOpacity>
+        )}
+
         <ReviewsCertificatesBox style={{ marginVertical: 30 }} />
 
         <TouchableOpacity
@@ -461,6 +486,11 @@ const styles = StyleSheet.create({
   cameraIcon: { position: 'absolute', bottom: 0, right: 5, backgroundColor: colors.text, padding: 8, borderRadius: 20, borderWidth: 3, borderColor: '#f9f9f9' },
   name: { fontSize: 22, fontFamily: fonts.title, color: colors.ink },
   subtitle: { fontSize: 14, color: '#716C83', marginTop: 5 },
+  setupBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20, padding: 16, borderRadius: 16, backgroundColor: colors.pinkTint, borderWidth: 1, borderColor: colors.pink },
+  setupTitle: { fontSize: 15, fontWeight: '700', color: colors.wine },
+  setupText: { fontSize: 13, color: colors.ink, marginTop: 2 },
+  setupTrack: { height: 6, borderRadius: 3, backgroundColor: 'rgba(11,21,14,0.08)', marginTop: 8, overflow: 'hidden' },
+  setupFill: { height: '100%', borderRadius: 3, backgroundColor: colors.pink },
   businessButton: { flexDirection: 'row', backgroundColor: colors.blue, padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, shadowColor: colors.blue, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   businessButtonLeft: { flexDirection: 'row', alignItems: 'center' },
   businessButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },

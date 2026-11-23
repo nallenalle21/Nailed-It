@@ -31,10 +31,23 @@ import BookingModal from '../../components/BookingModal';
 import { bookedMessage } from '../../services/booking';
 import ReviewsCertificatesBox from '../../components/ReviewsCertificatesBox';
 import { vendorCity } from '../../data/vendorCities';
+import { CATEGORY_LABELS, WORKPLACE_SHORT, type Category, type WorkplaceType } from '../../services/onboarding';
 import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
 import { getSavedTargetIds } from '../../services/wishlist';
 
-type Vendor = { id: string; username: string | null; role: string };
+type Vendor = {
+  id: string;
+  username: string | null;
+  role: string;
+  display_name: string | null;
+  /** Approximate area only (e.g. "Södermalm"); the exact address is private. */
+  area: string | null;
+  categories: Category[] | null;
+  workplace_types: WorkplaceType[] | null;
+  travel_km: number | null;
+  /** Finished their setup; until then only they can see this page. */
+  is_live: boolean;
+};
 type Service = {
   id: string;
   name: string;
@@ -116,9 +129,10 @@ export default function VendorProfile({ navigation, route }: any) {
 
     const load = async () => {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
         const [profileResult, servicesResult, certificatesResult, postsResult, avatarResult] = await Promise.all([
           supabase.from('profiles')
-            .select('id, username, role')
+            .select('id, username, role, display_name, area, categories, workplace_types, travel_km, is_live')
             .eq('id', vendorId)
             .eq('role', 'creator')
             .maybeSingle(),
@@ -148,7 +162,9 @@ export default function VendorProfile({ navigation, route }: any) {
         if (postsResult.error) failures.push(`Portfolio: ${postsResult.error.message}`);
         if (avatarResult.error) failures.push(`Avatar: ${avatarResult.error}`);
         setAvatarUrl(avatarResult.url);
-        setVendor((profileResult.data as Vendor | null) ?? null);
+        const loadedVendor = (profileResult.data as Vendor | null) ?? null;
+        // Not live yet: hidden from everyone except the freelancer themselves.
+        setVendor(loadedVendor && (loadedVendor.is_live || loadedVendor.id === user?.id) ? loadedVendor : null);
         setServices((servicesResult.data ?? []) as Service[]);
         setCertificates((certificatesResult.data ?? []) as Certificate[]);
         setPosts((postsResult.data ?? []) as VendorPost[]);
@@ -189,6 +205,13 @@ export default function VendorProfile({ navigation, route }: any) {
   ];
 
   const displayName = vendor?.username?.trim() || 'Unnamed creator';
+  // The name they chose in onboarding; the username stays their @handle.
+  const publicName = vendor?.display_name?.trim() || handle(displayName);
+  const area = vendor?.area || vendorCity(vendor?.username);
+  const categoryText = (vendor?.categories ?? []).map((k) => CATEGORY_LABELS[k]).join(' · ') || 'nail tech';
+  const workplaceText = (vendor?.workplace_types ?? [])
+    .map((w) => (w === 'mobile' && vendor?.travel_km ? `${WORKPLACE_SHORT[w]} within ${vendor.travel_km} km` : WORKPLACE_SHORT[w]))
+    .join(' · ');
   const initial = displayName.slice(0, 1).toUpperCase();
 
   const handleContactVendor = async () => {
@@ -241,9 +264,9 @@ export default function VendorProfile({ navigation, route }: any) {
       ) : !vendor ? (
         <View style={styles.center}>
           <Ionicons name="alert-circle-outline" size={32} color={theme.accent} />
-          <Text style={styles.emptyTitle}>Creator not found</Text>
+          <Text style={styles.emptyTitle}>Profile not available</Text>
           <Text style={styles.emptyText}>
-            This vendor isn’t available, or your account can’t read public creator profiles.
+            This nail tech isn’t on Nailed It yet, or their profile is still being set up.
           </Text>
           {errors.map(message => <Text style={styles.errorText} key={message}>{message}</Text>)}
         </View>
@@ -275,8 +298,13 @@ export default function VendorProfile({ navigation, route }: any) {
                 <Text style={styles.profileInitial}>{initial}</Text>
               )}
             </View>
-            <Text style={styles.name}>{handle(displayName)}</Text>
-            <Text style={styles.creatorLabel}>{['nail tech', vendorCity(vendor?.username)].filter(Boolean).join(' · ')}</Text>
+            <Text style={styles.name}>{publicName}</Text>
+            {vendor.display_name ? <Text style={styles.creatorLabel}>{handle(displayName)}</Text> : null}
+            <Text style={styles.creatorLabel}>{[categoryText, area].filter(Boolean).join(' · ')}</Text>
+            {workplaceText ? <Text style={styles.creatorLabel}>{workplaceText}</Text> : null}
+            {!vendor.is_live && (
+              <Text style={styles.previewNote}>Only you can see this page until your setup is finished.</Text>
+            )}
 
 
           </View>
@@ -415,6 +443,7 @@ const styles = StyleSheet.create({
   profileInitial: { fontWeight: '700', fontSize: 41, color: theme.accent },
   name: { color: theme.ink, fontSize: 28, fontFamily: fonts.title },
   creatorLabel: { fontSize: 13, color: theme.muted, marginTop: 7 },
+  previewNote: { fontSize: 12, color: theme.accent, fontWeight: '700', marginTop: 10 },
   warning: { marginHorizontal: 20, backgroundColor: '#FFF0F2', borderRadius: 12, flexDirection: 'row', gap: 10, padding: 13, marginBottom: 20 },
   warningHeading: { color: '#903749', fontSize: 13, fontWeight: '700' },
   warningText: { color: '#903749', fontSize: 12, lineHeight: 19, marginTop: 3 },

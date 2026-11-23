@@ -11,6 +11,10 @@ import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
 import BookingModal from '../../components/BookingModal';
 import ExploreSearch from '../../components/ExploreSearch';
 import CreatorPopup from '../../components/CreatorPopup';
+import BookView from '../../components/BookView';
+import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { freeTimeLabel, type BookableCreator, type FreeTime } from '../../services/findBooking';
 import { fetchCreatorsAvailableOn, toDateKey } from '../../services/booking';
 import { getSavedTargetIds } from '../../services/wishlist';
 import {
@@ -61,7 +65,10 @@ const inPriceRange = (price: number, [lo, hi]: PriceRange) =>
   (lo === PRICE_MIN || price >= lo) && (hi === PRICE_MAX || price <= hi);
 const formatPriceRange = ([lo, hi]: PriceRange) => `${lo}–${hi === PRICE_MAX ? `${PRICE_MAX}+` : hi} kr`;
 
-type MapCreator = { id: string; name: string };
+/** point: where the pin goes (the freelancer's area); missing → placeholder spot. */
+type MapCreator = { id: string; name: string; point?: { latitude: number; longitude: number } | null };
+
+const EXPLORE_MODE_KEY = 'explore.mode';
 
 // Creators do not store coordinates yet, so each pin gets a stable spot near central
 // Stockholm derived from the creator id. Replace with real work-location coordinates.
@@ -158,6 +165,12 @@ export default function ExploreUser({ navigation }: any) {
   const [availability, setAvailability] = useState<{ key: string; ids: Set<string> } | null>(null);
   const [popupCreator, setPopupCreator] = useState<MapCreator | null>(null);
   const [bookingCreator, setBookingCreator] = useState<MapCreator | null>(null);
+  // From the Book view / photo sheet: the time and service to pre-select in the booking sheet.
+  const [bookingPreset, setBookingPreset] = useState<{ date: string | null; start: string | null; serviceIds: string[] } | null>(null);
+  // Explore shows either the inspiration feed or the "Book" view; remembered on this phone.
+  const [mode, setMode] = useState<'inspire' | 'book'>('inspire');
+  // Photo tapped in the feed (opens the "Book this look" sheet).
+  const [sheetPhoto, setSheetPhoto] = useState<SheetPhoto | null>(null);
 
   // Text the photo feed is filtered by; typing in the search only searches people (see ExploreSearch).
   const [feedQuery, setFeedQuery] = useState('');
@@ -219,14 +232,22 @@ export default function ExploreUser({ navigation }: any) {
 
     const loadCreatorPosts = async () => {
       try {
+        // Only freelancers who finished their setup are shown to customers.
         const creatorsResult = await supabase.from('profiles')
-          .select('id, username')
-          .eq('role', 'creator');
+          .select('id, username, display_name, area_lat, area_lng')
+          .eq('role', 'creator')
+          .eq('is_live', true);
         if (creatorsResult.error) throw creatorsResult.error;
 
-        const creators = (creatorsResult.data ?? []) as { id: string; username: string | null }[];
+        const creators = (creatorsResult.data ?? []) as {
+          id: string; username: string | null; display_name: string | null; area_lat: number | null; area_lng: number | null;
+        }[];
         const nameById = new Map(creators.map(p => [p.id, p.username?.trim() || 'Unnamed creator']));
-        if (active) setCreators(creators.map(p => ({ id: p.id, name: nameById.get(p.id)! })));
+        if (active) setCreators(creators.map(p => ({
+          id: p.id,
+          name: nameById.get(p.id)!,
+          point: p.area_lat != null && p.area_lng != null ? { latitude: p.area_lat, longitude: p.area_lng } : null,
+        })));
         const allPosts: VendorPost[] = [];
 
         for (let from = 0; ; from += POSTS_PAGE_SIZE) {
@@ -293,6 +314,23 @@ export default function ExploreUser({ navigation }: any) {
       params: { vendorId },
     });
   }, [navigation]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(EXPLORE_MODE_KEY)
+      .then((saved) => { if (saved === 'book' || saved === 'inspire') setMode(saved); })
+      .catch(() => {});
+  }, []);
+  const changeMode = (next: 'inspire' | 'book') => {
+    setMode(next);
+    AsyncStorage.setItem(EXPLORE_MODE_KEY, next).catch(() => {});
+  };
+
+  /** Book from a card, the map or the photo sheet: a free time (pre-selected) or all times. */
+  const bookCreator = (c: BookableCreator, time: FreeTime | null) => {
+    setSheetPhoto(null);
+    setBookingPreset({ date: time?.date ?? null, start: time?.start ?? null, serviceIds: [c.serviceId] });
+    setBookingCreator({ id: c.id, name: c.username });
+  };
 
   const handleDragStart = useCallback((id: string, x: number, y: number) => {
     const lx = x - offsetRef.current.x;
@@ -418,6 +456,12 @@ export default function ExploreUser({ navigation }: any) {
   const colA = filteredPosts.filter((_, i) => i % 2 === 0);
   const colB = filteredPosts.filter((_, i) => i % 2 === 1);
 
+  const photosByCreator = useMemo(() => {
+    const byCreator: Record<string, string[]> = {};
+    for (const post of inspoPosts) (byCreator[post.vendorId] ??= []).push(post.uri);
+    return byCreator;
+  }, [inspoPosts]);
+
   const renderTile = (item: InspoItem) => (
     <InspoTile
       key={item.id}
@@ -426,6 +470,7 @@ export default function ExploreUser({ navigation }: any) {
       onStart={handleDragStart}
       onMove={handleDragMove}
       onEnd={handleDragEnd}
+      onTap={() => setSheetPhoto(item)}
     />
   );
 
@@ -462,7 +507,7 @@ export default function ExploreUser({ navigation }: any) {
             onFeedQueryChange={setFeedQuery}
             onOpenProfile={goToProfile}
             placeholder="search nail techs"
-            accessory={
+            accessory={mode === 'book' ? null : (
               <TouchableOpacity
                 style={styles.filterButton}
                 onPress={() => setFilterMenu(true)}
@@ -471,8 +516,50 @@ export default function ExploreUser({ navigation }: any) {
                 <Ionicons name="options-outline" size={22} color={colors.blue} />
                 {filtersActive ? <View style={styles.filterDot} /> : null}
               </TouchableOpacity>
-            }
+            )}
           >
+            {/* Inspiration feed or booking: the two ways to use Explore */}
+            <View style={styles.modeToggle}>
+              {(['inspire', 'book'] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.modeOption, mode === m && styles.modeOptionActive]}
+                  onPress={() => changeMode(m)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: mode === m }}
+                >
+                  <Ionicons name={m === 'inspire' ? 'sparkles-outline' : 'calendar-outline'} size={16} color={mode === m ? colors.wine : colors.ink} />
+                  <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{m === 'inspire' ? 'Get inspired' : 'Book'}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {mode === 'book' ? (
+              <BookView
+                photosByCreator={photosByCreator}
+                serviceOptions={SERVICES}
+                refreshKey={feedRefresh}
+                onBook={bookCreator}
+                onOpenProfile={goToProfile}
+                renderMap={(list) => (
+                  <MapView style={styles.map} initialRegion={STOCKHOLM}>
+                    {list.map((c) => (
+                      <Marker
+                        key={c.id}
+                        coordinate={c.areaPoint ?? demoCoordinate(c.id)}
+                        title={c.displayName}
+                        description={c.nextTimes[0] ? `Next free: ${freeTimeLabel(c.nextTimes[0])} · tap to book` : 'No free times soon · tap for profile'}
+                        anchor={{ x: 0.5, y: 1 }}
+                        centerOffset={{ x: 0, y: -18 }}
+                        onCalloutPress={() => (c.nextTimes[0] ? bookCreator(c, c.nextTimes[0]) : goToProfile(c.id))}
+                      >
+                        <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
+                      </Marker>
+                    ))}
+                  </MapView>
+                )}
+              />
+            ) : <>
             {/* PART 2: map */}
             <View style={styles.mapHeader}>
               <View style={styles.starTitle}>
@@ -485,7 +572,7 @@ export default function ExploreUser({ navigation }: any) {
                 {filtered.map((c) => (
                   <Marker
                     key={c.id}
-                    coordinate={demoCoordinate(c.id)}
+                    coordinate={c.point ?? demoCoordinate(c.id)}
                     title={handle(c.name)}
                     anchor={{ x: 0.5, y: 1 }}        // Android: pin tip on the location
                     centerOffset={{ x: 0, y: -18 }}   // iOS: same, half the 36pt pin height
@@ -529,6 +616,7 @@ export default function ExploreUser({ navigation }: any) {
                 <View style={styles.feedCol}>{colB.map(renderTile)}</View>
               </View>
             )}
+            </>}
           </ExploreSearch>
         </ScrollView>
         <RefreshStar refreshing={pulling} y={40} />
@@ -726,13 +814,22 @@ export default function ExploreUser({ navigation }: any) {
         onViewProfile={(id) => { setPopupCreator(null); goToProfile(id); }}
         onBook={(c) => setBookingCreator(c)}
       />
+      <PhotoBookSheet
+        photo={bookingCreator ? null : sheetPhoto}
+        onClose={() => setSheetPhoto(null)}
+        onBook={bookCreator}
+        onOpenProfile={(id) => { setSheetPhoto(null); goToProfile(id); }}
+      />
       <BookingModal
         visible={bookingCreator !== null}
         creator={bookingCreator}
-        initialDate={dateKey}
-        onClose={() => { setBookingCreator(null); setPopupCreator(null); }}
+        initialDate={bookingPreset ? bookingPreset.date : dateKey}
+        initialStart={bookingPreset?.start}
+        initialServiceIds={bookingPreset?.serviceIds}
+        onClose={() => { setBookingCreator(null); setBookingPreset(null); setPopupCreator(null); }}
         onBooked={(a) => {
           setBookingCreator(null);
+          setBookingPreset(null);
           setPopupCreator(null);
           setFeedRefresh(n => n + 1);
           showToast(a.status === 'pending' ? 'Request sent! See the answer in your calendar' : 'Appointment booked! See it in your calendar');
@@ -757,19 +854,24 @@ function InspoTile({
   onStart,
   onMove,
   onEnd,
+  onTap,
 }: {
   item: InspoItem;
   favorite: boolean;
   onStart: (id: string, x: number, y: number) => void;
   onMove: (x: number, y: number) => void;
   onEnd: () => void;
+  /** Quick tap: open the "Book this look" sheet. Holding still starts the drag. */
+  onTap: () => void;
 }) {
-  const gesture = Gesture.Pan()
+  const drag = Gesture.Pan()
     .runOnJS(true)
     .activateAfterLongPress(350)
     .onStart((e) => onStart(item.id, e.absoluteX, e.absoluteY))
     .onUpdate((e) => onMove(e.absoluteX, e.absoluteY))
     .onFinalize(() => onEnd());
+  const tap = Gesture.Tap().runOnJS(true).maxDuration(300).onEnd((_e, success) => { if (success) onTap(); });
+  const gesture = Gesture.Exclusive(drag, tap);
 
   // Which photo failed to load, so a new photo gets a fresh try.
   const [failedUri, setFailedUri] = useState<string | null>(null);
@@ -860,6 +962,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f2f2f2',
   },
   searchInput: { flex: 1, fontSize: 16, color: colors.ink },
+  modeToggle: { flexDirection: 'row', marginHorizontal: 16, marginBottom: 14, padding: 4, borderRadius: 16, backgroundColor: '#f2f2f2' },
+  modeOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 12 },
+  modeOptionActive: { backgroundColor: colors.pink },
+  modeText: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  modeTextActive: { color: colors.wine, fontWeight: '700' },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 12 },
   filterButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#f2f2f2', alignItems: 'center', justifyContent: 'center' },
   filterDot: { position: 'absolute', top: 10, right: 11, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },

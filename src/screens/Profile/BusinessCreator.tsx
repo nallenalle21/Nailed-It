@@ -11,7 +11,7 @@ export default function BusinessCreator({ navigation }: any) {
   // Pull down to refresh: spinning star instead of the system spinner.
   const pull = useStarRefresh(async () => {}) // menu only; the star still spins;
   const navigateTo = (screen: string) => {
-    if (screen === 'ServicesAndPrices' || screen === 'WorkLocations' || screen === 'Certificates' || screen === 'Bookkeeping') {
+    if (screen === 'Insights' || screen === 'ServicesAndPrices' || screen === 'WorkLocations' || screen === 'Certificates' || screen === 'Bookkeeping') {
       navigation.navigate(screen);
     } else {
       Alert.alert("Under utveckling", `Denna vy (${screen}) bygger vi härnäst!`);
@@ -34,6 +34,17 @@ export default function BusinessCreator({ navigation }: any) {
       </Text>
       
       <View style={styles.menuContainer}>
+        <TouchableOpacity style={styles.menuItem} onPress={() => navigateTo('Insights')}>
+          <View style={styles.menuIconBox}>
+            <Ionicons name="stats-chart-outline" size={22} color={colors.blue} />
+          </View>
+          <View style={styles.menuTextContent}>
+            <Text style={styles.menuTitle}>Insights</Text>
+            <Text style={styles.menuSubtitle}>Earnings, cancellations, clients and your busiest times.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.inkMuted} />
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.menuItem} onPress={() => navigateTo('ServicesAndPrices')}>
           <View style={styles.menuIconBox}>
             <Ionicons name="pricetags-outline" size={22} color={colors.blue} />

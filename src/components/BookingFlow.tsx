@@ -36,6 +36,7 @@ const STATUS_LABEL: Record<Appointment['status'], { text: string; color: string 
   cancelled: { text: 'Cancelled', color: colors.inkMuted },
   declined: { text: 'Declined', color: colors.inkMuted },
   expired: { text: 'Expired', color: colors.inkMuted },
+  no_show: { text: 'No-show', color: colors.wine },
 };
 
 type Props = {
