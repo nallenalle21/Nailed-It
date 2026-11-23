@@ -40,6 +40,7 @@ import CalendarUser from './src/screens/Calendar/CalendarUser';
 import ChatsUser from './src/screens/Chats/ChatsUser';
 import ProfileUser from './src/screens/Profile/ProfileUser';
 import Settings from './src/screens/Profile/Settings';
+import FAQ from './src/screens/Profile/FAQ';
 
 
 const Tab = createBottomTabNavigator();
@@ -208,11 +209,13 @@ export default function App() {
               <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
               <Stack.Screen name="VendorProfile" component={VendorProfile} options={{ headerShown: false }} />
               <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'creator' }} />
+              <Stack.Screen name="FAQ" component={FAQ} />
             </Stack.Group>
           ) : (
             <Stack.Group>
               <Stack.Screen name="UserTabs" component={UserTabs} />
               <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'user' }} />
+              <Stack.Screen name="FAQ" component={FAQ} />
               <Stack.Screen
                 name="ChatRoom"
                 component={ChatRoom}

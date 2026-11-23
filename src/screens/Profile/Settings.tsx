@@ -50,7 +50,7 @@ export default function Settings({ navigation, route }: any) {
         <View style={{ width: 34 }} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} showsVerticalScrollIndicator={false}>
         {isCreator ? (
           <>
             <Text style={styles.sectionTitle}>Bookings</Text>
@@ -81,6 +81,14 @@ export default function Settings({ navigation, route }: any) {
         ) : (
           <Text style={styles.empty}>No settings here yet.</Text>
         )}
+
+        {/* Pushed to the bottom of the screen */}
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity style={[styles.card, styles.linkRow]} onPress={() => navigation.navigate('FAQ')} accessibilityRole="button">
+          <Ionicons name="help-circle-outline" size={22} color={colors.blue} style={{ marginRight: 10 }} />
+          <Text style={[styles.cardTitle, { flex: 1 }]}>FAQ</Text>
+          <Ionicons name="chevron-forward" size={20} color={colors.ink} />
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -92,6 +100,8 @@ const styles = StyleSheet.create({
   backBtn: { padding: 5 },
   headerTitle: { fontSize: 22, color: colors.ink, fontFamily: fonts.title },
   content: { paddingHorizontal: 20 },
+  contentInner: { flexGrow: 1, paddingBottom: 24 }, // lets the FAQ row sit at the bottom
+  linkRow: { flexDirection: 'row', alignItems: 'center' },
   sectionTitle: { fontSize: 15, fontFamily: fonts.title, color: colors.ink, marginTop: 16, marginBottom: 10 },
   card: { backgroundColor: colors.background, padding: 20, borderRadius: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
