@@ -6,13 +6,22 @@ import { supabase } from '../../services/supabase';
 import { setStatusBarStyle } from 'expo-status-bar';
 import { colors, fonts } from '../../theme';
 
+// Supabase allows one confirmation email per minute by default.
+const RESEND_SECONDS = 60;
+
+const isNotConfirmed = (error: { message?: string; code?: string }) =>
+  error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message ?? '');
+
 export default function LoginScreen() {
   const [isLogin, setIsLogin] = useState(true);
   const [emailOrUsername, setEmailOrUsername] = useState('');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('user'); 
+  const [role, setRole] = useState('user');
+  // Email confirmation: the address the link was sent to, and seconds until it can be resent.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useState(0);
 
   // Tap the background → a star pops there (same as the Inspiration page).
   // Taps on the fields, buttons or text don't count.
@@ -26,6 +35,21 @@ export default function LoginScreen() {
     return () => setStatusBarStyle('dark');
   }, []);
 
+  // Countdown so the confirmation email can't be resent more than once a minute.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn(s => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
+
+  const resendConfirmation = async (address: string) => {
+    if (resendIn > 0) return;
+    const { error } = await supabase.auth.resend({ type: 'signup', email: address });
+    if (error) return Alert.alert('Error', error.message);
+    setResendIn(RESEND_SECONDS);
+    Alert.alert('Email sent', `We sent a new confirmation link to ${address}.`);
+  };
+
   const handleAuth = async () => {
     if (isLogin) {
       let loginEmail = emailOrUsername.trim();
@@ -37,20 +61,73 @@ export default function LoginScreen() {
       }
 
       const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
+      if (error && isNotConfirmed(error)) {
+        // Signed up, but hasn't tapped the link in the email yet.
+        return Alert.alert('Confirm your email', `Tap the link we sent to ${loginEmail} to activate your account.`, [
+          { text: 'OK', style: 'cancel' },
+          { text: 'Resend email', onPress: () => resendConfirmation(loginEmail) },
+        ]);
+      }
       if (error) Alert.alert('Error', error.message);
     } else {
       if (!username) return Alert.alert('Error', 'Username is required');
-      const { error } = await supabase.auth.signUp({
-        email: email.trim(),
+      const address = email.trim();
+      const { data, error } = await supabase.auth.signUp({
+        email: address,
         password,
         options: { data: { username: username.trim(), role } }
       });
       if (error) Alert.alert('Error', error.message);
-      else {
+      else if (!data.session) {
+        // "Confirm email" is on in Supabase: the account works once the link is tapped.
+        setPendingEmail(address);
+        setResendIn(RESEND_SECONDS);
+      } else {
         Alert.alert('Success', 'Account created!');
       }
     }
   };
+
+  // After signing up: same blue page, asking the user to confirm their email.
+  if (pendingEmail) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>Check Your Inbox</Text>
+        <Text style={styles.message}>
+          We sent a confirmation link to{'\n'}<Text style={styles.messageEmail}>{pendingEmail}</Text>
+        </Text>
+        <Text style={styles.message}>
+          Tap the link in the email, then come back and log in. Can't find it? Check your spam folder.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => {
+            setEmailOrUsername(pendingEmail);
+            setPassword('');
+            setIsLogin(true);
+            setPendingEmail(null);
+          }}
+        >
+          <Text style={styles.buttonText}>Log In</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.toggleBtn}
+          disabled={resendIn > 0}
+          onPress={() => resendConfirmation(pendingEmail)}
+        >
+          <Text style={[styles.toggleText, resendIn > 0 && styles.disabledText]}>
+            {resendIn > 0 ? `Resend email (${resendIn}s)` : "Didn't get it? Resend email"}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.toggleBtn} onPress={() => { setIsLogin(false); setPendingEmail(null); }}>
+          <Text style={styles.toggleText}>Wrong email? Sign up again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -79,6 +156,7 @@ export default function LoginScreen() {
           placeholder="Email or Username" 
           placeholderTextColor={colors.inkMuted}
           autoCapitalize="none" 
+          value={emailOrUsername}
           onChangeText={setEmailOrUsername} 
         />
       ) : (
@@ -106,6 +184,7 @@ export default function LoginScreen() {
         placeholder="Password" 
         placeholderTextColor={colors.inkMuted}
         secureTextEntry 
+        value={password}
         onChangeText={setPassword} 
       />
       
@@ -153,5 +232,8 @@ const styles = StyleSheet.create({
   button: { backgroundColor: colors.grey, padding: 18, borderRadius: 10, alignItems: 'center' },
   buttonText: { color: colors.background, fontSize: 18, fontWeight: 'bold' },
   toggleBtn: { marginTop: 20, alignItems: 'center' },
-  toggleText: { color: colors.background, fontSize: 16 }
+  toggleText: { color: colors.background, fontSize: 16 },
+  disabledText: { opacity: 0.5 },
+  message: { color: colors.background, fontSize: 16, lineHeight: 23, textAlign: 'center', marginBottom: 20 },
+  messageEmail: { color: colors.background, fontWeight: 'bold' },
 });
