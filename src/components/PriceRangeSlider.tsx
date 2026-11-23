@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View } from 'react-native';
 import { Text } from './AppText';
 import { colors } from '../theme';
@@ -21,7 +21,7 @@ export default function PriceRangeSlider({ min, max, step, value, onChange }: Pr
 
   // PanResponders are created once, so they read the latest props through refs.
   const latest = useRef({ value, width, onChange });
-  latest.current = { value, width, onChange };
+  useEffect(() => { latest.current = { value, width, onChange }; });
 
   const makeResponder = (thumb: 0 | 1) => {
     let start = 0;
@@ -45,8 +45,9 @@ export default function PriceRangeSlider({ min, max, step, value, onChange }: Pr
       },
     });
   };
-  const loResponder = useRef(makeResponder(0)).current;
-  const hiResponder = useRef(makeResponder(1)).current;
+  // The handlers read `latest` only while dragging, never during render.
+  const [loResponder] = useState(() => makeResponder(0)); // eslint-disable-line react-hooks/refs
+  const [hiResponder] = useState(() => makeResponder(1)); // eslint-disable-line react-hooks/refs
 
   const toX = (v: number) => ((v - min) / (max - min)) * width;
   const loX = toX(value[0]);

@@ -33,15 +33,16 @@ export default function VendorDirectory({ navigation }: any) {
   // Pull down to refresh: spinning star instead of the system spinner.
   const pull = useStarRefresh();
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Which load the list belongs to: while a newer load runs, it counts as loading (and no error).
+  const loadKey = `${refreshKey}|${pull.refreshKey}`;
+  const [loaded, setLoaded] = useState<{ key: string; error: string | null } | null>(null);
+  const loading = loaded?.key !== loadKey;
+  const error = !loading && loaded ? loaded.error : null;
 
   useEffect(() => {
     let current = true;
-    setLoading(true);
-    setError(null);
 
     (async () => {
       const { data, error: requestError } = await supabase
@@ -52,13 +53,12 @@ export default function VendorDirectory({ navigation }: any) {
 
       if (!current) return;
       setVendors((data ?? []) as Vendor[]);
-      setError(requestError?.message ?? null);
-      setLoading(false);
+      setLoaded({ key: loadKey, error: requestError?.message ?? null });
       pull.doneLoading();
     })();
 
     return () => { current = false; };
-  }, [refreshKey, pull.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>

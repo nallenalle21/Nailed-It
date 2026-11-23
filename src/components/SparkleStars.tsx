@@ -103,9 +103,9 @@ const SparkleStars = forwardRef<SparkleStarsHandle, SparkleStarsProps>(function 
 export default SparkleStars;
 
 function ShootingStar({ fall, onDone }: { fall: Fall; onDone: () => void }) {
-  const progress = useRef(new Animated.Value(0)).current;
+  const [progress] = useState(() => new Animated.Value(0));
   const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
+  useEffect(() => { onDoneRef.current = onDone; });
 
   useEffect(() => {
     Animated.timing(progress, { toValue: 1, duration: FALL_DURATION, easing: Easing.in(Easing.quad), useNativeDriver: true })
@@ -156,12 +156,12 @@ function ShootingStar({ fall, onDone }: { fall: Fall; onDone: () => void }) {
 
 // intro=false skips the pop-in and hold: the star starts full size and bursts right away.
 function StarBurst({ burst, onDone, intro = true }: { burst: Burst; onDone: () => void; intro?: boolean }) {
-  const star = useRef(new Animated.Value(0)).current;   // 0 → 1 pop in, 1 → 2 vanish
-  const sparks = useRef(new Animated.Value(0)).current; // 0 → 1 sparkles fly out and fade
+  const [star] = useState(() => new Animated.Value(0));   // 0 → 1 pop in, 1 → 2 vanish
+  const [sparks] = useState(() => new Animated.Value(0)); // 0 → 1 sparkles fly out and fade
   // Random sparkle directions, fixed for this burst.
-  const angles = useRef(Array.from({ length: SPARKS }, (_, i) => (i / SPARKS) * Math.PI * 2 + Math.random() * 0.6)).current;
+  const [angles] = useState(() => Array.from({ length: SPARKS }, (_, i) => (i / SPARKS) * Math.PI * 2 + Math.random() * 0.6));
   const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
+  useEffect(() => { onDoneRef.current = onDone; });
 
   // Runs once per burst.
   useEffect(() => {
@@ -234,8 +234,8 @@ export function RefreshStar({ refreshing, y = 60 }: { refreshing: boolean; y?: n
   const [bursts, setBursts] = useState<Burst[]>([]);
   // Shown separately from `refreshing` so a very fast reload still gets a full spin first.
   const [spinning, setSpinning] = useState(false);
-  const spin = useRef(new Animated.Value(0)).current;
-  const appear = useRef(new Animated.Value(0)).current;
+  const [spin] = useState(() => new Animated.Value(0));
+  const [appear] = useState(() => new Animated.Value(0));
   const startedAt = useRef(0);
   const SIZE = 34;
   const MIN_SPIN = 900; // ms: about one full turn before it bursts
@@ -244,7 +244,7 @@ export function RefreshStar({ refreshing, y = 60 }: { refreshing: boolean; y?: n
   useEffect(() => {
     if (!refreshing) return;
     startedAt.current = Date.now();
-    setSpinning(true);
+    setSpinning(true); // eslint-disable-line react-hooks/set-state-in-effect -- animation follows the refreshing prop
   }, [refreshing]);
 
   // Refresh finished: keep spinning until MIN_SPIN has passed, then burst into sparkles.
@@ -309,7 +309,7 @@ export function useStarRefresh(reload?: () => unknown) {
   const [refreshKey, setRefreshKey] = useState(0);
   const pending = useRef<null | (() => void)>(null);
   const reloadRef = useRef(reload);
-  reloadRef.current = reload;
+  useEffect(() => { reloadRef.current = reload; });
 
   const doneLoading = useCallback(() => {
     pending.current?.();

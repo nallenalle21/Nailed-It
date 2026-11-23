@@ -1,26 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { colors, fonts } from '../../theme';
 import { handle } from '../../utils/handle';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../../components/AppText';
 import { supabase } from '../../services/supabase';
 
 export default function CustomerProfile({ route, navigation }: any) {
-  // Pull down to refresh: spinning star instead of the system spinner.
-  const pull = useStarRefresh(() => fetchCustomerData());
   const { customerName, chatId } = route.params;
   const [loading, setLoading] = useState(true);
   const [customerInfo, setCustomerInfo] = useState<any>(null);
   const [pastBookingsCount, setPastBookingsCount] = useState(0);
 
-  useEffect(() => {
-    fetchCustomerData();
-  }, []);
-
-  const fetchCustomerData = async () => {
+  const fetchCustomerData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !chatId) return;
 
@@ -49,7 +43,14 @@ export default function CustomerProfile({ route, navigation }: any) {
       setPastBookingsCount(count || 0);
     }
     setLoading(false);
-  };
+  }, [chatId]);
+
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchCustomerData());
+
+  useEffect(() => {
+    fetchCustomerData(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; state is set when it arrives
+  }, [fetchCustomerData]);
 
   const renderStars = (rating: number) => {
     return (
@@ -115,7 +116,7 @@ export default function CustomerProfile({ route, navigation }: any) {
               <Text style={styles.reviewerName}>Lashes by Lina</Text>
               {renderStars(5)}
             </View>
-            <Text style={styles.reviewComment}>"Super friendly and arrived exactly on time. Highly recommend!"</Text>
+            <Text style={styles.reviewComment}>“Super friendly and arrived exactly on time. Highly recommend!”</Text>
             <Text style={styles.reviewDate}>Oct 12, 2026</Text>
           </View>
         </View>

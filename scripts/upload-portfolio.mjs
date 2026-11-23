@@ -15,7 +15,8 @@ const MAX_FILE_BYTES = 6 * 1024 * 1024;
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 
 const folder = process.argv[2];
-const { EMAIL, PASSWORD } = process.env;
+const EMAIL = process.env.EMAIL;
+const PASSWORD = process.env.PASSWORD;
 if (!folder || !EMAIL || !PASSWORD) {
   console.error("Usage: EMAIL=you@example.com PASSWORD='...' node scripts/upload-portfolio.mjs <folder>");
   process.exit(1);

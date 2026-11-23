@@ -44,9 +44,15 @@ export default function SaveToBoardModal({ visible, kind, targetId, onClose, onC
     }
   }, [kind, targetId]);
 
-  useEffect(() => {
-    if (visible && targetId) void reload();
+  // Closing the sheet drops a half-typed new board.
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
     if (!visible) { setCreating(false); setNewName(''); }
+  }
+
+  useEffect(() => {
+    if (visible && targetId) void reload(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; results are set when they arrive
   }, [visible, targetId, reload]);
 
   const chooseBoard = async (board: WishlistBoard) => {

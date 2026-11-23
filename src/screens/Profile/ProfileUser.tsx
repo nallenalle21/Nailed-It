@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import { StatsBox } from '../../components/ReviewsCertificatesBox';
 import { handle } from '../../utils/handle';
@@ -15,8 +15,7 @@ import { getWishlistBoards } from '../../services/wishlist';
 
 /** Customer's own profile: same look as the creator profile (avatar, HORIZON name, stats box). */
 export default function ProfileUser() {
-  // Pull down to refresh: spinning star instead of the system spinner.
-  const pull = useStarRefresh(() => fetchProfile());
+  const navigation = useNavigation<any>();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -38,6 +37,9 @@ export default function ProfileUser() {
       setLoading(false);
     }
   };
+
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchProfile());
 
   // Reload when the tab is opened, so new bookings/collections are counted.
   useFocusEffect(useCallback(() => { void fetchProfile(); }, []));
@@ -121,6 +123,15 @@ export default function ProfileUser() {
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
+      {/* Settings, top right */}
+      <TouchableOpacity
+        style={styles.settingsBtn}
+        onPress={() => navigation.navigate('Settings')}
+        hitSlop={10}
+        accessibilityLabel="Settings"
+      >
+        <Ionicons name="settings-outline" size={26} color={colors.ink} />
+      </TouchableOpacity>
       <RefreshStar refreshing={pull.refreshing} y={130} />
     </>
   );
@@ -131,6 +142,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 20, paddingBottom: 32 },
   header: { alignItems: 'center', marginTop: 100 },
+  settingsBtn: { position: 'absolute', top: 56, right: 20, padding: 4 },
   imageWrapper: { position: 'relative', marginBottom: 15 },
   profilePic: { width: 120, height: 120, borderRadius: 60, backgroundColor: colors.line },
   profilePicPlaceholder: { alignItems: 'center', justifyContent: 'center' },

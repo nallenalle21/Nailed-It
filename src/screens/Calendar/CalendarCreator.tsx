@@ -2,9 +2,7 @@ import { Fragment, useCallback, useState } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { handle } from '../../utils/handle';
-
-const STAR = require('../../../assets/images/star.png');
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';
 import {
@@ -21,7 +19,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
+import { canCancel, cancelAppointment, fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
+import { addAppointmentToCalendar } from '../../services/deviceCalendar';
+import { fetchBookingFlow, markBookingsSeen, respondToRequest } from '../../services/bookingRequests';
+import BookingFlow from '../../components/BookingFlow';
+import ReasonDialog from '../../components/ReasonDialog';
+
+const STAR = require('../../../assets/images/star.png');
 
 type Slot = { id: string; date: string; start: string; end: string; service: string };
 type BookedSlot = Slot & { customer: string };
@@ -107,6 +111,14 @@ export default function CalendarCreator() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(true);
   const [slotsLoadError, setSlotsLoadError] = useState('');
+  // Booking flow: requests to answer + recent bookings (see components/BookingFlow).
+  const [flow, setFlow] = useState<Appointment[]>([]);
+  const [flowLoading, setFlowLoading] = useState(true);
+  const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
+  // Booking (or request) the freelancer is about to cancel/decline from the day list.
+  const [cancelling, setCancelling] = useState<Appointment | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const navigation = useNavigation<any>();
 
   const [modalVisible, setModalVisible] = useState(false);
   const [startInput, setStartInput] = useState('');
@@ -123,7 +135,7 @@ export default function CalendarCreator() {
         if (authError) throw authError;
         if (!user) throw new Error('No signed-in creator was found.');
 
-        const [{ data, error }, appointmentRows] = await Promise.all([
+        const [{ data, error }, appointmentRows, flowRows] = await Promise.all([
           supabase
             .from('creator_slots')
             .select(SLOT_COLUMNS)
@@ -131,15 +143,27 @@ export default function CalendarCreator() {
             .order('slot_date')
             .order('start_time'),
           // A missing appointments table must not stop the availability calendar from loading.
-          fetchMyAppointments('creator').catch((e) => {
+          // Pending requests hold their time, so they are loaded too.
+          fetchMyAppointments('creator', ['confirmed', 'pending']).catch((e) => {
             console.warn('[Calendar] Could not load appointments:', e);
             return [] as Appointment[];
+          }),
+          fetchBookingFlow(user.id).catch((e) => {
+            console.warn('[Calendar] Could not load the booking flow:', e);
+            return null;
           }),
         ]);
         if (error) throw error;
         if (!isMounted) return;
 
         setAppointments(appointmentRows);
+        if (flowRows) {
+          setFlow(flowRows);
+          // Dots stay on screen for this visit; next time these count as seen.
+          if (flowRows.some((a) => !a.seen_by_creator_at && a.status !== 'pending')) {
+            markBookingsSeen().catch(() => {});
+          }
+        }
 
         const rows = (data ?? []) as CreatorSlotRow[];
         setCreatorId(user.id);
@@ -157,7 +181,7 @@ export default function CalendarCreator() {
         if (!isMounted) return;
         setSlotsLoadError(getErrorMessage(error, 'Could not load the creator calendar.'));
       } finally {
-        if (isMounted) setSlotsLoading(false);
+        if (isMounted) { setSlotsLoading(false); setFlowLoading(false); }
         pull.doneLoading();
       }
     };
@@ -166,7 +190,7 @@ export default function CalendarCreator() {
     return () => {
       isMounted = false;
     };
-  }, [pull.refreshKey])); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pull.refreshKey, reloadKey])); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getAvailableSlots = (key: string): Slot[] =>
     availableSlots
@@ -208,7 +232,7 @@ export default function CalendarCreator() {
   type Upcoming = { date: string; start: string; end: string; label: string };
   const upcoming: Upcoming[] = [
     ...bookedSlots.map((s) => ({ date: s.date, start: s.start, end: s.end, label: `${s.service} · ${handle(s.customer)}` })),
-    ...appointments.map((a) => ({
+    ...appointments.filter((a) => a.status === 'confirmed').map((a) => ({
       date: a.appointment_date,
       start: a.start_time.slice(0, 5),
       end: a.end_time.slice(0, 5),
@@ -220,6 +244,43 @@ export default function CalendarCreator() {
       .filter((slot) => slot.date > todayKey || (slot.date === todayKey && slot.start > nowTime))
       .sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start))[0] ?? null;
   const appointmentsForDay = appointments.filter((a) => a.appointment_date === selected);
+
+  const answerRequest = async (a: Appointment, accept: boolean, reason?: string) => {
+    setBusyRequestId(a.id);
+    try {
+      const updated = await respondToRequest(a.id, accept, reason);
+      if (accept) {
+        Alert.alert('Booking accepted', `${handle(a.customer_name)} has been told. Add it to your phone calendar?`, [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Add to calendar', onPress: () => addAppointmentToCalendar(updated, 'creator') },
+        ]);
+      }
+    } catch (e) {
+      Alert.alert(accept ? 'Could not accept' : 'Could not decline', getErrorMessage(e, 'Please try again.'));
+    } finally {
+      setBusyRequestId(null);
+      setReloadKey((n) => n + 1);
+    }
+  };
+
+  const cancelBooking = async (a: Appointment, reason: string) => {
+    setBusyRequestId(a.id);
+    try {
+      await cancelAppointment(a.id, reason);
+    } catch (e) {
+      Alert.alert('Could not cancel', getErrorMessage(e, 'Please try again.'));
+    } finally {
+      setBusyRequestId(null);
+      setReloadKey((n) => n + 1);
+    }
+  };
+
+  const openChat = (a: Appointment) =>
+    navigation.navigate('ChatRoom', {
+      chatId: [a.creator_id, a.customer_id].sort().join('_'),
+      customerName: a.customer_name,
+      role: 'creator',
+    });
 
   // Month grid (weeks start on Monday)
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -416,6 +477,16 @@ export default function CalendarCreator() {
           {nextUp && <Text style={styles.nextUpDetail}>{nextUp.label}</Text>}
         </View>
 
+        <BookingFlow
+          items={flow}
+          loading={flowLoading}
+          busyId={busyRequestId}
+          onAccept={(a) => answerRequest(a, true)}
+          onDecline={(a, reason) => answerRequest(a, false, reason)}
+          onCancel={cancelBooking}
+          onChat={openChat}
+        />
+
         {/* Month switcher */}
         <View style={styles.monthRow}>
           <TouchableOpacity onPress={() => changeMonth(-1)} hitSlop={10}>
@@ -513,13 +584,56 @@ export default function CalendarCreator() {
                   {a.customer_note ? (
                     <Text style={styles.slotNote}>“{a.customer_note}”</Text>
                   ) : null}
+                  {a.status === 'pending' && (
+                    <Text style={styles.slotRequest}>Request · waiting for your answer</Text>
+                  )}
                 </View>
+              </View>
+              <View style={styles.slotActions}>
+                {/* Save to Apple/Google Calendar */}
+                {a.status === 'confirmed' && (
+                  <TouchableOpacity
+                    style={[styles.slotAction, styles.calendarAction]}
+                    onPress={() => addAppointmentToCalendar(a, 'creator')}
+                    hitSlop={8}
+                    accessibilityLabel="Add to phone calendar"
+                  >
+                    <Ionicons name="calendar-outline" size={13} color={colors.background} />
+                  </TouchableOpacity>
+                )}
+                {/* Cancel the booking (or decline the request) */}
+                {canCancel(a) && busyRequestId !== a.id && (
+                  <TouchableOpacity
+                    style={[styles.slotAction, styles.calendarAction, styles.removeAction]}
+                    onPress={() => setCancelling(a)}
+                    hitSlop={8}
+                    accessibilityLabel={a.status === 'pending' ? 'Decline request' : 'Cancel booking'}
+                  >
+                    <Ionicons name="close" size={15} color={colors.background} />
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           ))}
           {bookedForDay.map(renderSlot)}
         </View>
       </ScrollView>
+
+      {cancelling && (
+        <ReasonDialog
+          title={cancelling.status === 'pending' ? 'Decline request' : 'Cancel booking'}
+          subtitle={`${handle(cancelling.customer_name)} · ${longLabel(cancelling.appointment_date)} ${cancelling.start_time.slice(0, 5)}`}
+          confirmLabel={cancelling.status === 'pending' ? 'Decline' : 'Cancel booking'}
+          placeholder="Message to the customer (optional)"
+          onClose={() => setCancelling(null)}
+          onConfirm={(reason) => {
+            const a = cancelling;
+            setCancelling(null);
+            if (a.status === 'pending') void answerRequest(a, false, reason);
+            else void cancelBooking(a, reason);
+          }}
+        />
+      )}
 
       {/* Add booking modal */}
       <Modal
@@ -657,6 +771,7 @@ const styles = StyleSheet.create({
   slotService: { fontSize: 14, color: colors.inkMuted, marginTop: 2 },
   slotCustomer: { fontSize: 13, color: colors.blue, fontWeight: '600', marginTop: 4 },
   slotNote: { fontSize: 13, color: colors.ink, fontStyle: 'italic', marginTop: 4 }, // customer's comment
+  slotRequest: { fontSize: 13, color: colors.wine, fontWeight: '700', marginTop: 4 },
   slotActions: {
     position: 'absolute',
     top: 0,
@@ -673,6 +788,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   bookAction: { backgroundColor: colors.blue },
+  calendarAction: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.blue },
   removeAction: { backgroundColor: 'crimson' },
   modalBackdrop: {
     flex: 1,

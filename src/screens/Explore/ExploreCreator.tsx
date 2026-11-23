@@ -262,7 +262,7 @@ export default function ExploreCreator({ navigation }: any) {
 
     void loadCreatorPosts();
     return () => { active = false; };
-  }, [feedRefresh]));
+  }, [feedRefresh])); // eslint-disable-line react-hooks/exhaustive-deps -- reload trigger
 
   // The hearts reflect Supabase, including saves made in other boards/screens.
   const reloadFavorites = useCallback(async () => {
@@ -751,8 +751,9 @@ function InspoTile({
     .onUpdate((e) => onMove(e.absoluteX, e.absoluteY))
     .onFinalize(() => onEnd());
 
-  const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => setImageFailed(false), [item.uri]);
+  // Which photo failed to load, so a new photo gets a fresh try.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const imageFailed = failedUri === item.uri;
 
   return (
     <GestureDetector gesture={gesture}>
@@ -764,7 +765,7 @@ function InspoTile({
             source={{ uri: item.uri }}
             style={styles.tileImage}
             resizeMode="cover"
-            onError={() => setImageFailed(true)}
+            onError={() => setFailedUri(item.uri)}
             accessibilityLabel={`Photo by ${item.creatorName}`}
           />
         )}
@@ -793,7 +794,7 @@ function DragBubble({
   y: number;
   hovered: boolean;
 }) {
-  const scale = useRef(new Animated.Value(0.5)).current;
+  const [scale] = useState(() => new Animated.Value(0.5));
 
   useEffect(() => {
     Animated.spring(scale, {

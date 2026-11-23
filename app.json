@@ -7,7 +7,11 @@
     "icon": "./assets/new-logo.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nallenalle21steam.nailedit",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -16,7 +20,11 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
     },
     "web": {
       "favicon": "./assets/new-logo.png"
@@ -24,7 +32,18 @@
     "plugins": [
       "@react-native-community/datetimepicker",
       "expo-status-bar",
-      "expo-font"
-    ]
+      "expo-font",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Nailed It adds your bookings to your calendar when you ask it to."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "aa788f2e-080b-409e-aa4d-0a9dded9b174"
+      }
+    }
   }
 }

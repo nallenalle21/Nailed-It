@@ -13,7 +13,8 @@ const MAX_FILE_BYTES = 6 * 1024 * 1024;
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 
 const file = process.argv[2];
-const { LOGIN, PASSWORD } = process.env;
+const LOGIN = process.env.LOGIN;
+const PASSWORD = process.env.PASSWORD;
 if (!file || !LOGIN || !PASSWORD) {
   console.error("Usage: LOGIN=<email or username> PASSWORD='...' node scripts/upload-avatar.mjs <image file>");
   process.exit(1);

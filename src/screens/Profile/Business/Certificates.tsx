@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
 import StarredTitle from '../../../components/StarredTitle';
 import { colors, fonts } from '../../../theme';
@@ -16,8 +16,6 @@ type Certificate = {
 };
 
 export default function Certificates({ navigation }: any) {
-  // Pull down to refresh: spinning star instead of the system spinner.
-  const pull = useStarRefresh(() => fetchCertificates());
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -25,12 +23,7 @@ export default function Certificates({ navigation }: any) {
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
   const [newCertName, setNewCertName] = useState('');
 
-  // 1. Fetch saved certificates from Supabase when the screen loads
-  useEffect(() => {
-    fetchCertificates();
-  }, []);
-
-  const fetchCertificates = async () => {
+  const fetchCertificates = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('certificates')
@@ -43,7 +36,15 @@ export default function Certificates({ navigation }: any) {
       setCertificates(data);
     }
     setLoading(false);
-  };
+  }, []);
+
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchCertificates());
+
+  // 1. Fetch saved certificates from Supabase when the screen loads
+  useEffect(() => {
+    fetchCertificates(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; state is set when it arrives
+  }, [fetchCertificates]);
 
   const handleUpload = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();

@@ -28,6 +28,7 @@ import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
 import BookingModal from '../../components/BookingModal';
+import { bookedMessage } from '../../services/booking';
 import ReviewsCertificatesBox from '../../components/ReviewsCertificatesBox';
 import { vendorCity } from '../../data/vendorCities';
 import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
@@ -72,18 +73,13 @@ const theme = {
   border: '#E9DFE6',
 };
 
-function money(amount: number | string): string {
-  const value = Number(amount);
-  return Number.isFinite(value) ? `${value.toLocaleString('sv-SE')} kr` : 'Price unavailable';
-}
-
 export default function VendorProfile({ navigation, route }: any) {
   const vendorId: string | undefined = route?.params?.vendorId;
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [, setServices] = useState<Service[]>([]); // still loaded, but the Services section is hidden for now
-  const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [, setCertificates] = useState<Certificate[]>([]); // still loaded, but not shown on this page yet
   const [posts, setPosts] = useState<VendorPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
@@ -165,7 +161,7 @@ export default function VendorProfile({ navigation, route }: any) {
     };
     void load();
     return () => { current = false; };
-  }, [vendorId, refreshKey]));
+  }, [vendorId, refreshKey])); // eslint-disable-line react-hooks/exhaustive-deps -- reload trigger
 
   const refreshSavedPhotos = useCallback(async () => {
     try { setSavedPostIds(await getSavedTargetIds('post')); }
@@ -247,7 +243,7 @@ export default function VendorProfile({ navigation, route }: any) {
           <Ionicons name="alert-circle-outline" size={32} color={theme.accent} />
           <Text style={styles.emptyTitle}>Creator not found</Text>
           <Text style={styles.emptyText}>
-            This vendor isn't available, or your account can't read public creator profiles.
+            This vendor isn’t available, or your account can’t read public creator profiles.
           </Text>
           {errors.map(message => <Text style={styles.errorText} key={message}>{message}</Text>)}
         </View>
@@ -387,9 +383,10 @@ export default function VendorProfile({ navigation, route }: any) {
         visible={bookingOpen && !!vendorId}
         creator={vendorId ? { id: vendorId, name: displayName } : null}
         onClose={() => setBookingOpen(false)}
-        onBooked={() => {
+        onBooked={(a) => {
           setBookingOpen(false);
-          Alert.alert('Appointment booked', 'You can find it in your Calendar.');
+          const msg = bookedMessage(a);
+          Alert.alert(msg.title, msg.body);
         }}
       />
       <SaveToBoardModal

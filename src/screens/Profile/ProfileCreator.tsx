@@ -217,9 +217,9 @@ export default function ProfileCreator({ navigation }: any) {
   const [dragOrder, setDragOrder] = useState<string[] | null>(null); // live order while dragging
   const drag = useRef<{ id: string; grabX: number; grabY: number; origin: { x: number; y: number }; moved: boolean } | null>(null);
   const gridRef = useRef<React.ComponentRef<typeof View>>(null);
-  const dragPos = useRef(new Animated.ValueXY()).current;
+  const [dragPos] = useState(() => new Animated.ValueXY());
   const latest = useRef({ photos, dragOrder, tileSize });
-  latest.current = { photos, dragOrder, tileSize };
+  useEffect(() => { latest.current = { photos, dragOrder, tileSize }; });
 
   // Tiles are a fixed 3-column grid, so slot positions can be computed.
   const slotOf = (index: number) => ({
@@ -260,10 +260,11 @@ export default function ProfileCreator({ navigation }: any) {
     }
   };
   const finishDragRef = useRef(finishDrag);
-  finishDragRef.current = finishDrag;
+  useEffect(() => { finishDragRef.current = finishDrag; });
 
   // The grid takes over the touch once a photo is picked up and the finger moves.
-  const gridResponder = useRef(PanResponder.create({
+  // The handlers read the drag refs only while dragging, never during render.
+  const [gridResponder] = useState(() => PanResponder.create({ // eslint-disable-line react-hooks/refs
     onMoveShouldSetPanResponderCapture: () => !!drag.current,
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => { if (drag.current) drag.current.moved = true; },
@@ -289,7 +290,7 @@ export default function ProfileCreator({ navigation }: any) {
     },
     onPanResponderRelease: () => void finishDragRef.current(),
     onPanResponderTerminate: () => void finishDragRef.current(),
-  })).current;
+  }));
 
   const selectedPhoto = photos.find(item => item.id === selectedPhotoId) ?? null;
   const displayName = profile?.username || 'Studio Name';
@@ -434,6 +435,15 @@ export default function ProfileCreator({ navigation }: any) {
           </View>
         </View>
       </Modal>
+      {/* Settings, top right */}
+      <TouchableOpacity
+        style={styles.settingsBtn}
+        onPress={() => navigation.navigate('Settings')}
+        hitSlop={10}
+        accessibilityLabel="Settings"
+      >
+        <Ionicons name="settings-outline" size={26} color={colors.ink} />
+      </TouchableOpacity>
       <RefreshStar refreshing={pull.refreshing} y={130} />
     </>
   );
@@ -443,6 +453,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.primarySoft },
   content: { paddingHorizontal: 20, paddingBottom: 32 },
   header: { alignItems: 'center', marginTop: 100 },
+  settingsBtn: { position: 'absolute', top: 56, right: 20, padding: 4 },
   imageWrapper: { position: 'relative', marginBottom: 15 },
   profilePic: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#e0e0e0' },
   profilePicPlaceholder: { alignItems: 'center', justifyContent: 'center' },

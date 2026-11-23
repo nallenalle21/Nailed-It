@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
 import { colors, fonts } from '../theme';
 import { handle } from '../utils/handle';
-import { fetchStudioAddress, formatKr, type Appointment } from '../services/booking';
+import { cancelAppointment, fetchStudioAddress, formatKr, isRequestExpired, type Appointment } from '../services/booking';
 import { getVendorAvatarUrl } from '../services/vendorAvatar';
+import { addAppointmentToCalendar } from '../services/deviceCalendar';
 
 const STAR = require('../../assets/images/star.png');
 
@@ -21,20 +22,32 @@ type Props = {
   onClose: () => void;
   /** Opens the nail tech's public profile. */
   onViewProfile: (creatorId: string) => void;
+  /** The booking changed here (a request was withdrawn), so the list should reload. */
+  onChanged?: () => void;
 };
 
-/** "View" on a booking: date, nail tech, services, place and the customer's comment. */
-export default function BookingDetailsModal({ appointment, onClose, onViewProfile }: Props) {
+/**
+ * "View" on a booking: date, nail tech, services, place and the customer's comment.
+ * For a request it also shows where it stands, and lets the customer withdraw it while it waits.
+ */
+export default function BookingDetailsModal({ appointment, onClose, onViewProfile, onChanged }: Props) {
+  const [withdrawing, setWithdrawing] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   // undefined = still loading, null = no studio address set
   const [address, setAddress] = useState<string | null | undefined>(undefined);
 
   const creatorId = appointment?.creator_id ?? null;
+  // Another nail tech: drop the previous one's photo and address while theirs load.
+  const [shownFor, setShownFor] = useState(creatorId);
+  if (creatorId !== shownFor) {
+    setShownFor(creatorId);
+    setAvatarUrl(null);
+    setAddress(undefined);
+  }
+
   useEffect(() => {
     if (!creatorId) return;
     let active = true;
-    setAvatarUrl(null);
-    setAddress(undefined);
     getVendorAvatarUrl(creatorId).then((url) => active && setAvatarUrl(url)).catch(() => {});
     fetchStudioAddress(creatorId)
       .then((value) => active && setAddress(value))
@@ -47,6 +60,37 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
 
   const a = appointment;
   const name = a ? handle(a.creator_name) : '';
+  // A booking from a chat offer has its own place; otherwise the studio address.
+  const place = a?.place || address;
+  const waiting = a?.status === 'pending' && !isRequestExpired(a);
+  const requestStatus =
+    !a || a.status === 'confirmed' ? null
+    : waiting ? `Waiting for ${name} to accept. The time is held for you meanwhile.`
+    : a.status === 'declined' ? `${name} declined this request.${a.decline_reason ? `\n“${a.decline_reason}”` : ''}`
+    : a.status === 'cancelled' ? 'This booking was cancelled.'
+    : `${name} didn’t answer in time, so the request expired. Feel free to book another time.`;
+
+  const withdraw = () => {
+    if (!a) return;
+    Alert.alert('Withdraw request?', 'The time is released and the nail tech is told.', [
+      { text: 'Keep', style: 'cancel' },
+      {
+        text: 'Withdraw',
+        style: 'destructive',
+        onPress: async () => {
+          setWithdrawing(true);
+          try {
+            await cancelAppointment(a.id);
+            onChanged?.();
+          } catch (e: any) {
+            Alert.alert('Could not withdraw', e instanceof Error ? e.message : String(e?.message ?? e));
+          } finally {
+            setWithdrawing(false);
+          }
+        },
+      },
+    ]);
+  };
 
   return (
     <Modal visible={a !== null} animationType="slide" onRequestClose={onClose}>
@@ -57,7 +101,7 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
           <TouchableOpacity style={styles.close} onPress={onClose} hitSlop={16} accessibilityLabel="Close">
             <Ionicons name="close" size={28} color={colors.ink} />
           </TouchableOpacity>
-          <Text style={styles.title}>Your Booking</Text>
+          <Text style={styles.title}>{a && a.status !== 'confirmed' ? 'Your Request' : 'Your Booking'}</Text>
           <View style={{ width: 44 }} />
         </View>
 
@@ -73,6 +117,13 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
                 {hhmm(a.start_time)}–{hhmm(a.end_time)} · {a.total_minutes} min
               </Text>
             </View>
+
+            {requestStatus && (
+              <View style={[styles.box, styles.infoRow, styles.statusBox]}>
+                <Ionicons name={waiting ? 'hourglass-outline' : 'information-circle-outline'} size={20} color={colors.ink} />
+                <Text style={styles.infoText}>{requestStatus}</Text>
+              </View>
+            )}
 
             <SectionTitle label="nail tech" />
             <TouchableOpacity
@@ -115,11 +166,11 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
             <SectionTitle label="place" />
             <View style={[styles.box, styles.infoRow]}>
               <Ionicons name="location-outline" size={20} color={colors.ink} />
-              {address === undefined ? (
+              {place === undefined ? (
                 <ActivityIndicator color={colors.wine} />
               ) : (
-                <Text style={[styles.infoText, !address && styles.muted]}>
-                  {address ?? 'No address yet. Ask your nail tech in chat.'}
+                <Text style={[styles.infoText, !place && styles.muted]}>
+                  {place ?? 'No address yet. Ask your nail tech in chat.'}
                 </Text>
               )}
             </View>
@@ -133,8 +184,19 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
             </View>
 
             <TouchableOpacity style={styles.profileButton} onPress={() => onViewProfile(a.creator_id)}>
-              <Text style={styles.profileButtonText}>View {name}'s Profile</Text>
+              <Text style={styles.profileButtonText}>View {name}’s Profile</Text>
             </TouchableOpacity>
+            {a.status === 'confirmed' && (
+              <TouchableOpacity style={styles.calendarButton} onPress={() => addAppointmentToCalendar(a, 'customer')}>
+                <Ionicons name="calendar-outline" size={18} color={colors.wine} />
+                <Text style={styles.profileButtonText}>Add to Calendar</Text>
+              </TouchableOpacity>
+            )}
+            {waiting && (
+              <TouchableOpacity style={styles.calendarButton} onPress={withdraw} disabled={withdrawing}>
+                {withdrawing ? <ActivityIndicator color={colors.wine} /> : <Text style={styles.profileButtonText}>Withdraw request</Text>}
+              </TouchableOpacity>
+            )}
           </ScrollView>
         )}
       </SafeAreaView>
@@ -170,8 +232,11 @@ const styles = StyleSheet.create({
   totalRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#ddd' },
   price: { fontSize: 15, fontWeight: '700', color: colors.ink },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
+  statusBox: { marginTop: 16, backgroundColor: colors.blueTint, borderColor: colors.blueTint },
   infoText: { flex: 1, fontSize: 15, color: colors.ink, lineHeight: 21 },
   muted: { color: colors.inkMuted },
   profileButton: { marginHorizontal: 16, marginTop: 28, backgroundColor: colors.pink, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   profileButtonText: { color: colors.wine, fontSize: 16, fontWeight: '700' },
+  // Apple/Google Calendar: outlined so "View Profile" stays the main button
+  calendarButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.pink, paddingVertical: 13 },
 });

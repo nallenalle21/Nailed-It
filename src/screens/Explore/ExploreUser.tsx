@@ -155,7 +155,7 @@ export default function ExploreUser({ navigation }: any) {
   }, [feedLoading]);
   const [creators, setCreators] = useState<MapCreator[]>([]);
   // null = no date filter (or still loading); otherwise creators with free time on the chosen date
-  const [availableIds, setAvailableIds] = useState<Set<string> | null>(null);
+  const [availability, setAvailability] = useState<{ key: string; ids: Set<string> } | null>(null);
   const [popupCreator, setPopupCreator] = useState<MapCreator | null>(null);
   const [bookingCreator, setBookingCreator] = useState<MapCreator | null>(null);
 
@@ -164,6 +164,10 @@ export default function ExploreUser({ navigation }: any) {
   const [serviceDraft, setServiceDraft] = useState<string[]>([]); // edited in the sheet until Save
   const [priceRange, setPriceRange] = useState<PriceRange | null>(null); // null = any price
   const [date, setDate] = useState<Date | null>(null);
+  const dateKey = date ? toDateKey(date) : null;
+  // Only the answer for the current date (and refresh) counts; anything older reads as still loading.
+  const availabilityKey = dateKey ? `${dateKey}|${feedRefresh}` : null;
+  const availableIds = availability && availability.key === availabilityKey ? availability.ids : null;
 
   const [serviceModal, setServiceModal] = useState(false);
   const [priceModal, setPriceModal] = useState(false);
@@ -265,7 +269,7 @@ export default function ExploreUser({ navigation }: any) {
 
     void loadCreatorPosts();
     return () => { active = false; };
-  }, [feedRefresh]));
+  }, [feedRefresh])); // eslint-disable-line react-hooks/exhaustive-deps -- reload trigger
 
   // The hearts reflect Supabase, including saves made in other boards/screens.
   const reloadFavorites = useCallback(async () => {
@@ -377,19 +381,14 @@ export default function ExploreUser({ navigation }: any) {
   }, [servicesByVendor, query, services, priceRange, date, availableIds]);
 
   // Creators with free time on the chosen date (the server accounts for existing bookings).
-  const dateKey = date ? toDateKey(date) : null;
   useEffect(() => {
-    if (!dateKey) {
-      setAvailableIds(null);
-      return;
-    }
+    if (!dateKey || !availabilityKey) return;
     let active = true;
-    setAvailableIds(null);
     fetchCreatorsAvailableOn(dateKey)
-      .then(ids => active && setAvailableIds(ids))
-      .catch(() => active && setAvailableIds(new Set()));
+      .then(ids => active && setAvailability({ key: availabilityKey, ids }))
+      .catch(() => active && setAvailability({ key: availabilityKey, ids: new Set() }));
     return () => { active = false; };
-  }, [dateKey, feedRefresh]);
+  }, [dateKey, availabilityKey]);
 
   const filtered = useMemo(
     () => creators.filter(c => matchesFilters(c.id, c.name)),
@@ -739,11 +738,11 @@ export default function ExploreUser({ navigation }: any) {
         creator={bookingCreator}
         initialDate={dateKey}
         onClose={() => { setBookingCreator(null); setPopupCreator(null); }}
-        onBooked={() => {
+        onBooked={(a) => {
           setBookingCreator(null);
           setPopupCreator(null);
           setFeedRefresh(n => n + 1);
-          showToast('Appointment booked! See it in your calendar');
+          showToast(a.status === 'pending' ? 'Request sent! See the answer in your calendar' : 'Appointment booked! See it in your calendar');
         }}
       />
       <SaveToBoardModal
@@ -779,8 +778,9 @@ function InspoTile({
     .onUpdate((e) => onMove(e.absoluteX, e.absoluteY))
     .onFinalize(() => onEnd());
 
-  const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => setImageFailed(false), [item.uri]);
+  // Which photo failed to load, so a new photo gets a fresh try.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const imageFailed = failedUri === item.uri;
 
   return (
     <GestureDetector gesture={gesture}>
@@ -792,7 +792,7 @@ function InspoTile({
             source={{ uri: item.uri }}
             style={styles.tileImage}
             resizeMode="cover"
-            onError={() => setImageFailed(true)}
+            onError={() => setFailedUri(item.uri)}
             accessibilityLabel={`Photo by ${item.creatorName}`}
           />
         )}
@@ -821,7 +821,7 @@ function DragBubble({
   y: number;
   hovered: boolean;
 }) {
-  const scale = useRef(new Animated.Value(0.5)).current;
+  const [scale] = useState(() => new Animated.Value(0.5));
 
   useEffect(() => {
     Animated.spring(scale, {

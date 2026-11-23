@@ -33,10 +33,53 @@ export type Appointment = {
   total_minutes: number;
   total_price: number | string;
   services: { id: string; name: string; duration_minutes: number; price: number }[];
-  status: 'confirmed' | 'cancelled';
+  /**
+   * 'pending' = a request waiting for the freelancer (they approve manually); it holds the slot.
+   * 'declined' / 'expired' = a request that was turned down or never answered.
+   * See supabase/booking_requests.sql.
+   */
+  status: AppointmentStatus;
+  created_at?: string;
   /** The customer's comment from the booking screen (see supabase/booking_details.sql). */
   customer_note?: string | null;
+  /** Where it happens, for bookings made from a chat offer (see supabase/booking_offers.sql). */
+  place?: string | null;
+  /** Pending requests: when it expires if nobody answers. */
+  expires_at?: string | null;
+  /** The freelancer's optional message when declining. */
+  decline_reason?: string | null;
+  /** null = the freelancer hasn't seen it in their booking flow yet. */
+  seen_by_creator_at?: string | null;
+  /** Who cancelled, and their optional message (see supabase/booking_cancellation.sql). */
+  cancelled_by?: string | null;
+  cancel_reason?: string | null;
 };
+
+export type AppointmentStatus = 'pending' | 'confirmed' | 'declined' | 'expired' | 'cancelled';
+
+/** A pending request past its expiry (the server expires it within a few minutes). */
+export const isRequestExpired = (a: Appointment, now = new Date()) =>
+  a.status === 'pending' && !!a.expires_at && new Date(a.expires_at) <= now;
+
+/** When it starts, on the phone's clock (times are stored as Swedish wall-clock times). */
+export const appointmentStart = (a: Pick<Appointment, 'appointment_date' | 'start_time'>) => {
+  const [y, m, d] = a.appointment_date.split('-').map(Number);
+  return new Date(y, m - 1, d, Number(a.start_time.slice(0, 2)), Number(a.start_time.slice(3, 5)));
+};
+
+/** Bookings and waiting requests can be cancelled by either person until they start. */
+export const canCancel = (a: Appointment, now = new Date()) =>
+  (a.status === 'confirmed' || (a.status === 'pending' && !isRequestExpired(a, now))) && appointmentStart(a) > now;
+
+/** What to tell the customer right after booking: confirmed, or a request waiting for approval. */
+export function bookedMessage(a: Appointment): { title: string; body: string } {
+  return a.status === 'pending'
+    ? {
+        title: 'Request sent',
+        body: `${a.creator_name ? `@${a.creator_name.replace(/^@/, '')}` : 'Your nail tech'} approves bookings personally. You'll see the answer in your Calendar and in the chat.`,
+      }
+    : { title: 'Appointment booked', body: 'You can find it in your Calendar.' };
+}
 
 export const START_STEP_MINUTES = 15;
 
@@ -163,8 +206,14 @@ export async function fetchStudioAddress(creatorId: string): Promise<string | nu
   return (data as string | null) ?? null;
 }
 
-/** Confirmed appointments where the signed-in user is the customer or the creator (RLS-scoped). */
-export async function fetchMyAppointments(role: 'customer' | 'creator'): Promise<Appointment[]> {
+/**
+ * Appointments where the signed-in user is the customer or the creator (RLS-scoped).
+ * Confirmed only, unless other statuses are asked for (e.g. pending requests).
+ */
+export async function fetchMyAppointments(
+  role: 'customer' | 'creator',
+  statuses: AppointmentStatus[] = ['confirmed'],
+): Promise<Appointment[]> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError) throw authError;
   if (!user) throw new Error('Please sign in again.');
@@ -172,9 +221,18 @@ export async function fetchMyAppointments(role: 'customer' | 'creator'): Promise
     .from('appointments')
     .select(APPOINTMENT_COLUMNS)
     .eq(role === 'customer' ? 'customer_id' : 'creator_id', user.id)
-    .eq('status', 'confirmed')
+    .in('status', statuses)
     .order('appointment_date')
     .order('start_time');
   if (error) throw error;
   return (data ?? []) as Appointment[];
+}
+
+/**
+ * Either person cancels a booking (or the customer withdraws a request). The optional message
+ * is posted in their chat; the other person also gets a push.
+ */
+export async function cancelAppointment(id: string, reason?: string): Promise<void> {
+  const { error } = await supabase.rpc('cancel_appointment', { p_id: id, p_reason: reason?.trim() || null });
+  if (error) throw error;
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { colors } from '../../theme';
@@ -10,24 +10,16 @@ import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import { useIsFocused } from '@react-navigation/native';
 
 export default function ChatsCreator({ navigation }: any) {
-  // Pull down to refresh: spinning star instead of the system spinner.
-  const pull = useStarRefresh(() => fetchMyChats());
   const [chats, setChats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const isFocused = useIsFocused(); // För att uppdatera listan varje gång man går in på skärmen
 
-  useEffect(() => {
-    if (isFocused) {
-      fetchMyChats();
-    }
-  }, [isFocused]);
-
-  const fetchMyChats = async () => {
+  const fetchMyChats = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     // Hämta meddelanden där denna kreatör är med
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('messages')
       .select('*')
       .like('chat_id', `%${user.id}%`)
@@ -74,7 +66,16 @@ export default function ChatsCreator({ navigation }: any) {
       setChats(uniqueChats);
     }
     setLoading(false);
-  };
+  }, []);
+
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchMyChats());
+
+  useEffect(() => {
+    if (isFocused) {
+      fetchMyChats(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; state is set when it arrives
+    }
+  }, [isFocused, fetchMyChats]);
 
   const handlePressChat = (chatId: string, customerName: string) => {
     navigation.navigate('ChatRoom', { chatId, customerName, role: 'creator' });

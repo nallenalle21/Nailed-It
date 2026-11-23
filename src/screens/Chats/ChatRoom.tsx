@@ -1,10 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { colors, fonts } from '../../theme';
 import { handle } from '../../utils/handle';
-import { View, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { Text } from '../../components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { formatKr } from '../../services/booking';
+import { fetchChatOffers, offerEndTime, respondToOffer, withdrawOffer, type BookingOffer } from '../../services/offers';
+import { addAppointmentToCalendar } from '../../services/deviceCalendar';
+import OfferCard from '../../components/OfferCard';
+import OfferComposerModal from '../../components/OfferComposerModal';
 
 type Message = {
   id: string;
@@ -12,7 +17,12 @@ type Message = {
   sender_id: string;
   text: string;
   created_at: string;
+  /** Set when the message shows a booking offer card (see supabase/booking_offers.sql). */
+  offer_id?: string | null;
 };
+
+const errorMessage = (e: unknown) =>
+  e instanceof Error ? e.message : typeof e === 'object' && e && 'message' in e ? String((e as any).message) : String(e);
 
 export default function ChatRoom({ route, navigation }: any) {
   const { chatId, customerName, role } = route.params;
@@ -22,6 +32,35 @@ export default function ChatRoom({ route, navigation }: any) {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const flatListRef = useRef<FlatList>(null);
+  // Booking offers in this chat, by id; the cards look them up from their message.
+  const [offers, setOffers] = useState<Record<string, BookingOffer>>({});
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [busyOfferId, setBusyOfferId] = useState<string | null>(null);
+
+  const fetchOffers = useCallback(async () => {
+    try {
+      const rows = await fetchChatOffers(chatId);
+      setOffers(Object.fromEntries(rows.map((o) => [o.id, o])));
+    } catch (e) {
+      // Before booking_offers.sql has been run the table is missing; the chat still works.
+      console.warn('[ChatRoom] Could not load offers:', errorMessage(e));
+    }
+  }, [chatId]);
+
+  const fetchMessages = useCallback(async () => {
+    const { data } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: true });
+
+    if (data) {
+      await fetchOffers();
+      setMessages(data);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
+    }
+    setLoading(false);
+  }, [chatId, fetchOffers]);
 
   useEffect(() => {
     let channel: any;
@@ -42,12 +81,24 @@ export default function ChatRoom({ route, navigation }: any) {
           filter: `chat_id=eq.${chatId}`
         }, (payload) => {
           const newMessage = payload.new as Message;
+          if (newMessage.offer_id) void fetchOffers();
           setMessages((prev) => {
-            const isDuplicate = prev.some(m => m.text === newMessage.text && m.sender_id === newMessage.sender_id);
+            const isDuplicate = prev.some(m => m.id === newMessage.id ||
+              (m.id.startsWith('temp-') && m.text === newMessage.text && m.sender_id === newMessage.sender_id));
             if (isDuplicate) return prev;
             return [...prev, newMessage];
           });
           setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+        })
+        // Accepted / declined / withdrawn: the card updates for both people.
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'booking_offers',
+          filter: `chat_id=eq.${chatId}`
+        }, (payload) => {
+          const offer = payload.new as BookingOffer;
+          if (offer?.id) setOffers((prev) => ({ ...prev, [offer.id]: offer }));
         })
         .subscribe();
     };
@@ -57,21 +108,7 @@ export default function ChatRoom({ route, navigation }: any) {
     return () => {
       if (channel) supabase.removeChannel(channel);
     };
-  }, [chatId]);
-
-  const fetchMessages = async () => {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('chat_id', chatId)
-      .order('created_at', { ascending: true });
-
-    if (data) {
-      setMessages(data);
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
-    }
-    setLoading(false);
-  };
+  }, [chatId, fetchMessages, fetchOffers]);
 
   const handleSendMessage = async () => {
     if (!inputText.trim() || !currentUserId) return;
@@ -80,7 +117,7 @@ export default function ChatRoom({ route, navigation }: any) {
     setInputText('');
 
     const tempMessage: Message = {
-      id: Date.now().toString(),
+      id: `temp-${Date.now()}`,
       chat_id: chatId,
       sender_id: currentUserId,
       text: newText,
@@ -97,7 +134,60 @@ export default function ChatRoom({ route, navigation }: any) {
     });
   };
 
+  const runOfferAction = async (offerId: string, action: () => Promise<void>) => {
+    setBusyOfferId(offerId);
+    try {
+      await action();
+    } catch (e) {
+      Alert.alert('Something went wrong', errorMessage(e));
+    } finally {
+      setBusyOfferId(null);
+      void fetchOffers();
+    }
+  };
+
+  const acceptOffer = (o: BookingOffer) =>
+    Alert.alert('Book this?', `${o.title}\n${o.offer_date} · ${o.start_time.slice(0, 5)}–${offerEndTime(o)}\n${formatKr(o.price)}`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Accept & book',
+        onPress: () => runOfferAction(o.id, async () => {
+          const appointment = await respondToOffer(o.id, true);
+          if (!appointment) return;
+          Alert.alert('Booked!', 'It is in your Calendar. Add it to your phone calendar too?', [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Add to calendar', onPress: () => addAppointmentToCalendar(appointment, 'customer') },
+          ]);
+        }),
+      },
+    ]);
+
+  const declineOffer = (o: BookingOffer) =>
+    Alert.alert('Decline this offer?', o.title, [
+      { text: 'Keep', style: 'cancel' },
+      { text: 'Decline', style: 'destructive', onPress: () => runOfferAction(o.id, async () => { await respondToOffer(o.id, false); }) },
+    ]);
+
+  const withdraw = (o: BookingOffer) =>
+    Alert.alert('Withdraw this offer?', o.title, [
+      { text: 'Keep', style: 'cancel' },
+      { text: 'Withdraw', style: 'destructive', onPress: () => runOfferAction(o.id, () => withdrawOffer(o.id)) },
+    ]);
+
   const renderMessage = ({ item }: { item: Message }) => {
+    const offer = item.offer_id ? offers[item.offer_id] : undefined;
+    if (offer) {
+      return (
+        <OfferCard
+          offer={offer}
+          sentByMe={offer.creator_id === currentUserId}
+          busy={busyOfferId === offer.id}
+          onAccept={() => acceptOffer(offer)}
+          onDecline={() => declineOffer(offer)}
+          onWithdraw={() => withdraw(offer)}
+        />
+      );
+    }
     const isMyMessage = item.sender_id === currentUserId;
     const timeString = new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -166,6 +256,7 @@ export default function ChatRoom({ route, navigation }: any) {
           data={messages}
           keyExtractor={(item) => item.id}
           renderItem={renderMessage}
+          extraData={[offers, busyOfferId, currentUserId]}
           contentContainerStyle={styles.chatContainer}
           showsVerticalScrollIndicator={false}
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
@@ -174,6 +265,16 @@ export default function ChatRoom({ route, navigation }: any) {
 
       {/* TEXT-INPUT */}
       <View style={styles.inputContainer}>
+        {role === 'creator' && (
+          <TouchableOpacity
+            style={styles.offerBtn}
+            onPress={() => setComposerOpen(true)}
+            disabled={!currentUserId}
+            accessibilityLabel="Send a booking offer"
+          >
+            <Ionicons name="calendar-outline" size={22} color={colors.blue} />
+          </TouchableOpacity>
+        )}
         <TextInput
           style={styles.textInput}
           placeholder="Type a message..."
@@ -191,6 +292,19 @@ export default function ChatRoom({ route, navigation }: any) {
           <Ionicons name="send" size={20} color={colors.background} />
         </TouchableOpacity>
       </View>
+
+      {composerOpen && currentUserId && (
+        <OfferComposerModal
+          chatId={chatId}
+          creatorId={currentUserId}
+          customerName={customerName}
+          onClose={() => setComposerOpen(false)}
+          onSent={() => {
+            setComposerOpen(false);
+            void fetchMessages();
+          }}
+        />
+      )}
 
     </KeyboardAvoidingView>
   );
@@ -243,4 +357,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', marginLeft: 10,
   },
   sendBtnDisabled: { backgroundColor: colors.inkMuted },
+  offerBtn: {
+    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: colors.line,
+    justifyContent: 'center', alignItems: 'center', marginRight: 10,
+  },
 });

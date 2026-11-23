@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { handle } from '../../utils/handle';
 import {
   ActivityIndicator, Alert, Animated, findNodeHandle, Image, Modal, PanResponder, RefreshControl, ScrollView, StyleSheet,
-  TextInput, TouchableOpacity, View,
+  TextInput, TouchableOpacity, View, type GestureResponderEvent,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -141,9 +141,10 @@ export default function WishlistScreen({ navigation }: any) {
   const drag = useRef<{ id: string; grabX: number; grabY: number; origin: { x: number; y: number }; moved: boolean } | null>(null);
   const slotRects = useRef<Rect[]>([]);   // grid slot positions by index, relative to the grid
   const gridRef = useRef<React.ComponentRef<typeof View>>(null);
-  const dragPos = useRef(new Animated.ValueXY()).current;
+  const [dragPos] = useState(() => new Animated.ValueXY());
+  const [ghostWidth, setGhostWidth] = useState(0); // width of the picked-up photo
   const dragOrderRef = useRef<string[] | null>(null);
-  dragOrderRef.current = dragOrder;
+  useEffect(() => { dragOrderRef.current = dragOrder; });
 
   const shownEntries = dragOrder
     ? dragOrder.map(id => boardEntries.find(e => e.id === id)).filter((e): e is WishlistEntry => !!e)
@@ -155,6 +156,7 @@ export default function WishlistScreen({ navigation }: any) {
     gridRef.current.measureInWindow((gx, gy) => {
       drag.current = { id: entry.id, grabX: pageX - gx - rect.x, grabY: pageY - gy - rect.y, origin: { x: gx, y: gy }, moved: false };
       dragPos.setValue({ x: rect.x, y: rect.y });
+      setGhostWidth(rect.width);
       setDragOrder(boardEntries.map(e => e.id));
       setDragId(entry.id);
     });
@@ -174,10 +176,11 @@ export default function WishlistScreen({ navigation }: any) {
     });
   };
   const finishDragRef = useRef(finishDrag);
-  finishDragRef.current = finishDrag;
+  useEffect(() => { finishDragRef.current = finishDrag; });
 
   // The grid takes over the touch once a photo has been picked up and the finger moves.
-  const gridResponder = useRef(PanResponder.create({
+  // The handlers read the drag refs only while dragging, never during render.
+  const [gridResponder] = useState(() => PanResponder.create({ // eslint-disable-line react-hooks/refs
     onMoveShouldSetPanResponderCapture: () => !!drag.current,
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => { if (drag.current) drag.current.moved = true; },
@@ -199,7 +202,7 @@ export default function WishlistScreen({ navigation }: any) {
     },
     onPanResponderRelease: () => finishDragRef.current(),
     onPanResponderTerminate: () => finishDragRef.current(),
-  })).current;
+  }));
 
   const goToVendor = (vendorId: string) => {
     navigation.navigate('Vendors', {
@@ -269,25 +272,28 @@ export default function WishlistScreen({ navigation }: any) {
     </TouchableOpacity>
   );
 
+  const onBackgroundTouchStart = (e: GestureResponderEvent) => {
+    const { pageX, pageY, target, timestamp } = e.nativeEvent;
+    touchStart.current = { x: pageX, y: pageY, t: timestamp, target: String(target) };
+  };
+  const onBackgroundTouchEnd = (e: GestureResponderEvent) => {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start || dragId) return;
+    const { pageX, pageY, timestamp } = e.nativeEvent;
+    const isTap = Math.hypot(pageX - start.x, pageY - start.y) < 10 && timestamp - start.t < 400;
+    if (isTap && isBackground(start.target, [rootRef, headerRef, scrollRef, contentRef, cardsRef, gridRef as AnyRef, emptyRef])) {
+      sparkles.current?.popAt(pageX, pageY);
+    }
+  };
+
   return (
     <SafeAreaView
       ref={rootRef}
       style={styles.screen}
       edges={['top', 'left', 'right']}
-      onTouchStart={e => {
-        const { pageX, pageY, target } = e.nativeEvent;
-        touchStart.current = { x: pageX, y: pageY, t: Date.now(), target: String(target) };
-      }}
-      onTouchEnd={e => {
-        const start = touchStart.current;
-        touchStart.current = null;
-        if (!start || dragId) return;
-        const { pageX, pageY } = e.nativeEvent;
-        const isTap = Math.hypot(pageX - start.x, pageY - start.y) < 10 && Date.now() - start.t < 400;
-        if (isTap && isBackground(start.target, [rootRef, headerRef, scrollRef, contentRef, cardsRef, gridRef as AnyRef, emptyRef])) {
-          sparkles.current?.popAt(pageX, pageY);
-        }
-      }}
+      onTouchStart={onBackgroundTouchStart}
+      onTouchEnd={onBackgroundTouchEnd}
     >
       {/* Rare decorative stars (pop-ups + shooting stars) on the main page and inside collections; paused when you leave the tab */}
       <SparkleStars ref={sparkles} active={isFocused} />
@@ -398,12 +404,11 @@ export default function WishlistScreen({ navigation }: any) {
               {/* The picked-up photo follows the finger */}
               {dragId && (() => {
                 const entry = boardEntries.find(e => e.id === dragId);
-                const rect = slotRects.current[0];
-                if (!entry || !rect) return null;
+                if (!entry || !ghostWidth) return null;
                 return (
                   <Animated.View
                     pointerEvents="none"
-                    style={[styles.dragGhost, { width: rect.width, transform: [...dragPos.getTranslateTransform(), { scale: 1.05 }] }]}
+                    style={[styles.dragGhost, { width: ghostWidth, transform: [...dragPos.getTranslateTransform(), { scale: 1.05 }] }]}
                   >
                     <View style={styles.savedTile}>
                       {entry.kind === 'post' && entry.imageUri ? (

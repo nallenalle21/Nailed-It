@@ -1,7 +1,6 @@
-import 'react-native-gesture-handler'; // must stay the very first import
+import { GestureHandlerRootView } from 'react-native-gesture-handler'; // must stay the very first import
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -33,6 +32,7 @@ import WishlistUser from './src/screens/Wishlist/WishlistUser';
 import CalendarUser from './src/screens/Calendar/CalendarUser';
 import ChatsUser from './src/screens/Chats/ChatsUser';
 import ProfileUser from './src/screens/Profile/ProfileUser';
+import Settings from './src/screens/Profile/Settings';
 
 
 const Tab = createBottomTabNavigator();
@@ -158,10 +158,12 @@ export default function App() {
               <Stack.Screen name="CalendarCreator" component={CalendarCreator} options={{ headerShown: false }} />
               <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
               <Stack.Screen name="VendorProfile" component={VendorProfile} options={{ headerShown: false }} />
+              <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'creator' }} />
             </Stack.Group>
           ) : (
             <Stack.Group>
               <Stack.Screen name="UserTabs" component={UserTabs} />
+              <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'user' }} />
               <Stack.Screen
                 name="ChatRoom"
                 component={ChatRoom}

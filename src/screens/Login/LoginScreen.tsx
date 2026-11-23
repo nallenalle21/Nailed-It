@@ -97,7 +97,7 @@ export default function LoginScreen() {
           We sent a confirmation link to{'\n'}<Text style={styles.messageEmail}>{pendingEmail}</Text>
         </Text>
         <Text style={styles.message}>
-          Tap the link in the email, then come back and log in. Can't find it? Check your spam folder.
+          Tap the link in the email, then come back and log in. Can’t find it? Check your spam folder.
         </Text>
 
         <TouchableOpacity

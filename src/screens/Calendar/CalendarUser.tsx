@@ -2,8 +2,6 @@ import { useCallback, useState } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { handle } from '../../utils/handle';
-
-const STAR = require('../../../assets/images/star.png');
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
@@ -15,12 +13,16 @@ import {
   RefreshControl,
   Image,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { fetchMyAppointments, formatKr, type Appointment } from '../../services/booking';
+import { bookedMessage, canCancel, cancelAppointment, fetchMyAppointments, formatKr, isRequestExpired, type Appointment } from '../../services/booking';
 import BookingModal from '../../components/BookingModal';
 import BookingDetailsModal from '../../components/BookingDetailsModal';
+import ReasonDialog from '../../components/ReasonDialog';
+
+const STAR = require('../../../assets/images/star.png');
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
@@ -39,6 +41,15 @@ const longLabel = (key: string) => {
   return `${Number(d)} ${MONTHS[Number(m) - 1]}`;
 };
 const hhmm = (t: string) => t.slice(0, 5);
+
+/** Label for anything that isn't a plain confirmed booking. */
+const requestLabel = (a: Appointment) =>
+  a.status === 'pending' && !isRequestExpired(a) ? { text: 'Waiting for approval', color: colors.blue }
+  : a.status === 'declined' ? { text: 'Declined', color: colors.wine }
+  : a.status === 'expired' || a.status === 'pending' ? { text: 'Request expired (no answer)', color: colors.inkMuted }
+  : a.status === 'cancelled'
+    ? { text: a.cancelled_by === a.customer_id ? 'You cancelled' : `Cancelled by ${handle(a.creator_name)}`, color: colors.wine }
+  : null;
 
 // How many nail techs to show under "Book Again".
 const BOOK_AGAIN_MAX = 3;
@@ -61,6 +72,9 @@ export default function CalendarUser() {
   const [rebook, setRebook] = useState<Appointment | null>(null);
   // "View": the booking card with service, nail tech, time, place and comment.
   const [viewing, setViewing] = useState<Appointment | null>(null);
+  // Booking (or request) the customer is about to cancel, and the one being cancelled right now.
+  const [cancelling, setCancelling] = useState<Appointment | null>(null);
+  const [cancelBusyId, setCancelBusyId] = useState<string | null>(null);
   const navigation = useNavigation<any>();
 
   // Same as Explore: the public profile lives in the Vendors tab.
@@ -72,10 +86,11 @@ export default function CalendarUser() {
   // Reload on focus so a freshly confirmed booking shows up.
   useFocusEffect(useCallback(() => {
     let active = true;
-    fetchMyAppointments('customer')
+    // Requests too: waiting ones, and answered ones that haven't happened yet.
+    fetchMyAppointments('customer', ['confirmed', 'pending', 'declined', 'expired', 'cancelled'])
       .then((rows) => {
         if (!active) return;
-        setAppointments(rows);
+        setAppointments(rows.filter((a) => a.status === 'confirmed' || a.status === 'pending' || a.appointment_date >= todayKey));
         setLoadError('');
       })
       .catch((e) => active && setLoadError(e instanceof Error ? e.message : String(e?.message ?? e)))
@@ -85,7 +100,7 @@ export default function CalendarUser() {
 
   // Latest booking with each nail tech (newest first), including ones just booked.
   const bookAgain: Appointment[] = [];
-  for (const a of [...appointments].sort((x, y) =>
+  for (const a of appointments.filter((x) => x.status === 'confirmed').sort((x, y) =>
     y.appointment_date.localeCompare(x.appointment_date) || y.start_time.localeCompare(x.start_time))) {
     if (bookAgain.length === BOOK_AGAIN_MAX) break;
     if (!bookAgain.some((b) => b.creator_id === a.creator_id)) bookAgain.push(a);
@@ -93,6 +108,7 @@ export default function CalendarUser() {
 
   const nextUp =
     appointments
+      .filter((a) => a.status === 'confirmed' || (a.status === 'pending' && !isRequestExpired(a)))
       .filter((a) => a.appointment_date > todayKey || (a.appointment_date === todayKey && hhmm(a.start_time) > nowTime))
       .sort((a, b) => a.appointment_date.localeCompare(b.appointment_date) || a.start_time.localeCompare(b.start_time))[0] ?? null;
   const daySlots = appointments.filter((a) => a.appointment_date === selected);
@@ -134,6 +150,7 @@ export default function CalendarUser() {
           {nextUp && (
             <Text style={styles.nextUpDetail}>
               {nextUp.services.map((s) => s.name).join(', ')} · {handle(nextUp.creator_name)}
+              {nextUp.status === 'pending' ? ' · waiting for approval' : ''}
             </Text>
           )}
         </View>
@@ -234,10 +251,29 @@ export default function CalendarUser() {
                   </Text>
                   <Text style={styles.slotService}>{a.services.map((s) => s.name).join(', ')}</Text>
                   <Text style={styles.slotService}>{a.total_minutes} min · {formatKr(a.total_price)}</Text>
+                  {requestLabel(a) && (
+                    <Text style={[styles.slotStatus, { color: requestLabel(a)!.color }]}>{requestLabel(a)!.text}</Text>
+                  )}
+                  {a.status === 'declined' && a.decline_reason ? (
+                    <Text style={styles.slotService}>“{a.decline_reason}”</Text>
+                  ) : null}
+                  {a.status === 'cancelled' && a.cancel_reason ? (
+                    <Text style={styles.slotService}>“{a.cancel_reason}”</Text>
+                  ) : null}
                 </View>
-                <TouchableOpacity style={styles.againButton} onPress={() => setViewing(a)} accessibilityLabel="View booking">
-                  <Text style={styles.againButtonText}>View</Text>
-                </TouchableOpacity>
+                <View style={styles.slotButtons}>
+                  <TouchableOpacity style={styles.againButton} onPress={() => setViewing(a)} accessibilityLabel="View booking">
+                    <Text style={styles.againButtonText}>View</Text>
+                  </TouchableOpacity>
+                  {canCancel(a) && (cancelBusyId === a.id ? (
+                    <ActivityIndicator color={colors.wine} />
+                  ) : (
+                    <TouchableOpacity onPress={() => setCancelling(a)} hitSlop={8}
+                      accessibilityLabel={a.status === 'pending' ? 'Withdraw request' : 'Cancel booking'}>
+                      <Text style={styles.cancelLink}>{a.status === 'pending' ? 'Withdraw' : 'Cancel'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
             </View>
           ))}
@@ -245,20 +281,44 @@ export default function CalendarUser() {
       </ScrollView>
       <RefreshStar refreshing={pull.refreshing} y={120} />
 
+      {cancelling && (
+        <ReasonDialog
+          title={cancelling.status === 'pending' ? 'Withdraw request' : 'Cancel booking'}
+          subtitle={`${handle(cancelling.creator_name)} · ${longLabel(cancelling.appointment_date)} ${hhmm(cancelling.start_time)}`}
+          confirmLabel={cancelling.status === 'pending' ? 'Withdraw' : 'Cancel booking'}
+          placeholder="Message to your nail tech (optional)"
+          onClose={() => setCancelling(null)}
+          onConfirm={async (reason) => {
+            const a = cancelling;
+            setCancelling(null);
+            setCancelBusyId(a.id);
+            try {
+              await cancelAppointment(a.id, reason);
+            } catch (e: any) {
+              Alert.alert('Could not cancel', e instanceof Error ? e.message : String(e?.message ?? e));
+            } finally {
+              setCancelBusyId(null);
+              setReloadKey((n) => n + 1);
+            }
+          }}
+        />
+      )}
       <BookingDetailsModal
         appointment={viewing}
         onClose={() => setViewing(null)}
         onViewProfile={goToProfile}
+        onChanged={() => { setViewing(null); setReloadKey((n) => n + 1); }}
       />
       <BookingModal
         visible={rebook !== null}
         creator={rebook ? { id: rebook.creator_id, name: rebook.creator_name } : null}
         initialServiceIds={rebook?.services.map((s) => s.id) ?? null}
         onClose={() => setRebook(null)}
-        onBooked={() => {
+        onBooked={(a) => {
           setRebook(null);
           setReloadKey((n) => n + 1);
-          Alert.alert('Appointment booked', 'You can find it in your Calendar.');
+          const msg = bookedMessage(a);
+          Alert.alert(msg.title, msg.body);
         }}
       />
     </SafeAreaView>
@@ -343,6 +403,8 @@ const styles = StyleSheet.create({
   againRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: colors.pinkTint },
   againButton: { backgroundColor: colors.pink, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
   againButtonText: { color: colors.wine, fontSize: 14, fontWeight: '700' },
+  slotButtons: { alignItems: 'center', gap: 8 },
+  cancelLink: { fontSize: 13, color: colors.wine, fontWeight: '600', textDecorationLine: 'underline' },
   slot: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -354,6 +416,7 @@ const styles = StyleSheet.create({
   },
   slotText: { fontSize: 16, fontWeight: '600' },
   slotService: { fontSize: 14, color: colors.inkMuted, marginTop: 2 },
+  slotStatus: { fontSize: 13, fontWeight: '700', marginTop: 4 },
   minus: {
     position: 'absolute',
     top: 0,

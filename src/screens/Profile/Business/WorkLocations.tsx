@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
 import StarredTitle from '../../../components/StarredTitle';
 import { colors, fonts } from '../../../theme';
@@ -7,8 +7,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../services/supabase'; // Adjust path if needed
 
 export default function WorkLocations({ navigation }: any) {
-  // Pull down to refresh: spinning star instead of the system spinner.
-  const pull = useStarRefresh(() => fetchLocations());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [locationId, setLocationId] = useState<string | null>(null);
@@ -23,12 +21,7 @@ export default function WorkLocations({ navigation }: any) {
   const [eventEnabled, setEventEnabled] = useState(false);
   const [eventTerms, setEventTerms] = useState('');
 
-  // 1. Load saved settings from Supabase when opening the screen
-  useEffect(() => {
-    fetchLocations();
-  }, []);
-
-  const fetchLocations = async () => {
+  const fetchLocations = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('work_locations')
@@ -49,7 +42,15 @@ export default function WorkLocations({ navigation }: any) {
       setEventTerms(data.event_terms ?? '');
     }
     setLoading(false);
-  };
+  }, []);
+
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchLocations());
+
+  // 1. Load saved settings from Supabase when opening the screen
+  useEffect(() => {
+    fetchLocations(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; state is set when it arrives
+  }, [fetchLocations]);
 
   // 2. Save or update settings in Supabase
   const handleSave = async () => {
@@ -154,7 +155,7 @@ export default function WorkLocations({ navigation }: any) {
                 trackColor={{ false: colors.line, true: colors.blue }}
               />
             </View>
-            <Text style={styles.cardSubtitle}>You travel to the client's home.</Text>
+            <Text style={styles.cardSubtitle}>You travel to the client’s home.</Text>
 
             {homeEnabled && (
               <View style={styles.expandedContent}>

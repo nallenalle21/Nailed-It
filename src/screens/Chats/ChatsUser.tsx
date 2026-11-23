@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { colors } from '../../theme';
@@ -9,21 +9,15 @@ import { supabase } from '../../services/supabase';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 
 export default function ChatsUser({ navigation }: any) {
-  // Pull down to refresh: spinning star instead of the system spinner.
-  const pull = useStarRefresh(() => fetchMyChats());
   const [chats, setChats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchMyChats();
-  }, []);
-
-  const fetchMyChats = async () => {
+  const fetchMyChats = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     // Hämta meddelanden för denna användare
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('messages')
       .select('*')
       .like('chat_id', `%${user.id}%`) // Hämtar bara chattar där din inloggade användare är med
@@ -72,7 +66,14 @@ export default function ChatsUser({ navigation }: any) {
       setChats(uniqueChats);
     }
     setLoading(false);
-  };
+  }, []);
+
+  // Pull down to refresh: spinning star instead of the system spinner.
+  const pull = useStarRefresh(() => fetchMyChats());
+
+  useEffect(() => {
+    fetchMyChats(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; state is set when it arrives
+  }, [fetchMyChats]);
 
   const handlePressChat = (chatId: string, creatorName: string) => {
     navigation.navigate('ChatRoom', { chatId, customerName: creatorName, role: 'user' });

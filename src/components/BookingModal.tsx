@@ -19,8 +19,6 @@ import { Text } from './AppText';
 import { colors, fonts } from '../theme';
 import { handle } from '../utils/handle';
 import { HIDDEN_SPINNER, RefreshStar } from './SparkleStars';
-
-const STAR = require('../../assets/images/star.png');
 import {
   availableDates,
   bookAppointment,
@@ -37,6 +35,9 @@ import {
   type CreatorService,
   type ScheduleEntry,
 } from '../services/booking';
+import { addAppointmentToCalendar } from '../services/deviceCalendar';
+
+const STAR = require('../../assets/images/star.png');
 
 const HORIZON_DAYS = 60;
 
@@ -68,8 +69,7 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
   const [start, setStart] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [note, setNote] = useState(''); // optional comment to the nail tech
-  const [quote, setQuote] = useState<BookingQuote | null>(null);
-  const [quoting, setQuoting] = useState(false);
+  const [addToCalendar, setAddToCalendar] = useState(false); // also save it in Apple/Google Calendar
   const [submitting, setSubmitting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   // Pull-to-refresh reloads quietly (keeps the choices on screen) and shows the spinning star.
@@ -77,9 +77,22 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
   const [pulling, setPulling] = useState(false);
   // Read when the services have loaded (kept out of the effect below so it doesn't reload).
   const presetServices = useRef(initialServiceIds);
-  presetServices.current = initialServiceIds;
+  useEffect(() => { presetServices.current = initialServiceIds; });
 
   const creatorId = creator?.id ?? null;
+
+  // Closing the sheet clears the choices, so it opens fresh next time.
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (!visible) {
+      setDate(null);
+      setStart(null);
+      setSelected([]);
+      setNote('');
+      setAddToCalendar(false);
+    }
+  }
 
   useEffect(() => {
     if (!visible || !creatorId) return;
@@ -87,7 +100,7 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
     const quiet = quietReload.current;
     quietReload.current = false;
     if (!quiet) setLoading(true);
-    setLoadError(null);
+    setLoadError(null); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; results are set when they arrive
     const now = new Date();
     const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + HORIZON_DAYS);
     Promise.all([fetchCreatorServices(creatorId), fetchSchedule(creatorId, toDateKey(now), toDateKey(to))])
@@ -108,38 +121,33 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
     return () => { active = false; };
   }, [visible, creatorId, initialDate, reloadKey]);
 
-  useEffect(() => {
-    if (!visible) {
-      setDate(null);
-      setStart(null);
-      setSelected([]);
-      setNote('');
-      setQuote(null);
-    }
-  }, [visible]);
-
   const dates = useMemo(() => availableDates(schedule), [schedule]);
   const startTimes = useMemo(() => (date ? startTimesForDay(schedule, date) : []), [schedule, date]);
 
-  useEffect(() => {
-    setStart((prev) => (prev && startTimes.includes(prev) ? prev : null));
-  }, [startTimes]);
+  // A start time that is no longer offered (other date, or taken on reload) is cleared.
+  const [prevStartTimes, setPrevStartTimes] = useState(startTimes);
+  if (startTimes !== prevStartTimes) {
+    setPrevStartTimes(startTimes);
+    if (start && !startTimes.includes(start)) setStart(null);
+  }
 
-  // The server is the source of truth for fit, duration and price.
+  // The server is the source of truth for fit, duration and price. A quote only counts for the
+  // exact choices (and load) it was asked for; until that one arrives, it is still quoting.
   const selectionKey = selected.join(',');
+  const quoteKey = creatorId && date && start && selected.length > 0
+    ? `${creatorId}|${date}|${start}|${selectionKey}|${reloadKey}`
+    : null;
+  const [quoted, setQuoted] = useState<{ key: string; quote: BookingQuote } | null>(null);
+  const quote = quoteKey && quoted?.key === quoteKey ? quoted.quote : null;
+  const quoting = !!quoteKey && quoted?.key !== quoteKey;
   useEffect(() => {
-    if (!creatorId || !date || !start || selected.length === 0) {
-      setQuote(null);
-      return;
-    }
+    if (!quoteKey || !creatorId || !date || !start) return;
     let active = true;
-    setQuoting(true);
     quoteBooking(creatorId, date, start, selected)
-      .then((q) => active && setQuote(q))
-      .catch((e) => active && setQuote({ ok: false, reason: errorMessage(e) }))
-      .finally(() => active && setQuoting(false));
+      .then((q) => active && setQuoted({ key: quoteKey, quote: q }))
+      .catch((e) => active && setQuoted({ key: quoteKey, quote: { ok: false, reason: errorMessage(e) } }));
     return () => { active = false; };
-  }, [creatorId, date, start, selectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [quoteKey]); // eslint-disable-line react-hooks/exhaustive-deps -- quoteKey covers all inputs
 
   const toggleService = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -159,11 +167,13 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
           console.warn('[BookingModal] Could not save comment:', errorMessage(e));
         }
       }
+      // Opens the phone's "new event" screen; handles its own errors, so the booking stands either way.
+      // A request waiting for approval isn't a booking yet: it can be added from the Calendar once accepted.
+      if (addToCalendar && appointment.status === 'confirmed') await addAppointmentToCalendar(appointment, 'customer');
       onBooked(appointment);
     } catch (e) {
       Alert.alert('Could not book', errorMessage(e));
-      setReloadKey((n) => n + 1);
-      setQuote(null);
+      setReloadKey((n) => n + 1); // reloads the times and asks for a fresh quote
     } finally {
       setSubmitting(false);
     }
@@ -261,6 +271,19 @@ export default function BookingModal({ visible, creator, initialDate, initialSer
               multiline
               maxLength={300}
             />
+
+            <TouchableOpacity
+              style={styles.calendarToggle}
+              onPress={() => setAddToCalendar((v) => !v)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: addToCalendar }}
+            >
+              <Ionicons name={addToCalendar ? 'checkbox' : 'square-outline'} size={22} color={addToCalendar ? colors.pink : colors.ink} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.serviceName}>Add to my phone calendar</Text>
+                <Text style={styles.serviceMeta}>Apple Calendar, Google Calendar or another calendar on your phone</Text>
+              </View>
+            </TouchableOpacity>
           </ScrollView>
         )}
 
@@ -337,4 +360,5 @@ const styles = StyleSheet.create({
   confirmDisabled: { opacity: 0.4 },
   noteInput: { marginHorizontal: 16, minHeight: 80, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#ddd', fontSize: 15, color: colors.ink, textAlignVertical: 'top' },
   confirmText: { color: colors.wine, fontSize: 16, fontWeight: '700' },
+  calendarToggle: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16, marginTop: 16, padding: 14 },
 });

@@ -15,15 +15,23 @@ type Props = {
 
 /** Short profile card shown when a map pin is tapped. */
 export default function CreatorPopup({ creator, onClose, onViewProfile, onBook }: Props) {
-  const [services, setServices] = useState<CreatorService[]>([]);
-  const [loading, setLoading] = useState(false);
   const creatorId = creator?.id ?? null;
+  const [services, setServices] = useState<CreatorService[]>([]);
+  const [loading, setLoading] = useState(creatorId !== null);
+
+  // Another creator: drop the previous one's prices while theirs load.
+  const [shownFor, setShownFor] = useState(creatorId);
+  if (creatorId !== shownFor) {
+    setShownFor(creatorId);
+    if (creatorId) {
+      setLoading(true);
+      setServices([]);
+    }
+  }
 
   useEffect(() => {
     if (!creatorId) return;
     let active = true;
-    setLoading(true);
-    setServices([]);
     fetchCreatorServices(creatorId)
       .then((s) => active && setServices(s))
       .catch(() => active && setServices([]))
