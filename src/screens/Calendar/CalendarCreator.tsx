@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useState } from 'react';
+import { Fragment, useCallback, useRef, useState, type ComponentRef } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { handle } from '../../utils/handle';
@@ -15,6 +15,8 @@ import {
   StyleSheet,
   RefreshControl,
   Image,
+  Platform,
+  type AlertButton,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +26,10 @@ import { addAppointmentToCalendar } from '../../services/deviceCalendar';
 import { fetchBookingFlow, markBookingsSeen, respondToRequest } from '../../services/bookingRequests';
 import BookingFlow from '../../components/BookingFlow';
 import ReasonDialog from '../../components/ReasonDialog';
+import MonthGrid from '../../components/calendar/MonthGrid';
+import DayTimeline, { HOUR_HEIGHT } from '../../components/calendar/DayTimeline';
+import ViewMenu from '../../components/calendar/ViewMenu';
+import { MONTH_VIEWS, eventsByDate, useCalendarView, type CalendarEvent } from '../../components/calendar/types';
 
 const STAR = require('../../../assets/images/star.png');
 
@@ -41,7 +47,6 @@ type CreatorSlotRow = {
 
 const SLOT_COLUMNS = 'id, slot_date, start_time, end_time, service, status, customer_name';
 
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -119,6 +124,9 @@ export default function CalendarCreator() {
   const [cancelling, setCancelling] = useState<Appointment | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const navigation = useNavigation<any>();
+  // Compact / Stacked / Details / Day, remembered on this phone.
+  const [view, setView] = useCalendarView('calendarView.creator');
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [startInput, setStartInput] = useState('');
@@ -282,14 +290,27 @@ export default function CalendarCreator() {
       role: 'creator',
     });
 
-  // Month grid (weeks start on Monday)
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const offset = (new Date(year, month, 1).getDay() + 6) % 7;
-  const cells: (number | null)[] = [
-    ...Array(offset).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  // What the calendar views draw: free time (soft), bookings (blue) and requests (wine).
+  const events: CalendarEvent[] = [
+    ...[...new Set(availableSlots.map((slot) => slot.date))].flatMap((date) =>
+      getFreeSlots(date).map((slot) => ({
+        id: slot.id, date, start: slot.start, end: slot.end, title: 'Available', kind: 'available' as const,
+      }))),
+    ...appointments.map((a) => ({
+      id: a.id,
+      date: a.appointment_date,
+      start: a.start_time.slice(0, 5),
+      end: a.end_time.slice(0, 5),
+      title: handle(a.customer_name),
+      subtitle: a.services.map((sv) => sv.name).join(', '),
+      kind: a.status === 'pending' ? ('request' as const) : ('booked' as const),
+    })),
+    ...bookedSlots.map((slot) => ({
+      id: slot.id, date: slot.date, start: slot.start, end: slot.end,
+      title: handle(slot.customer), subtitle: slot.service, kind: 'booked' as const,
+    })),
   ];
-  while (cells.length % 7 !== 0) cells.push(null);
+  const byDate = eventsByDate(events);
 
   const changeMonth = (delta: number) => {
     const d = new Date(year, month + delta, 1);
@@ -297,11 +318,80 @@ export default function CalendarCreator() {
     setMonth(d.getMonth());
   };
 
+  /** Pick a day; the month shown follows it (so Day view and the month stay in step). */
+  const selectDay = (key: string) => {
+    const [y, m] = key.split('-').map(Number);
+    setSelected(key);
+    setYear(y);
+    setMonth(m - 1);
+  };
+  const changeDay = (delta: number) => {
+    const [y, m, d] = selected.split('-').map(Number);
+    const next = new Date(y, m - 1, d + delta);
+    selectDay(dateKey(next.getFullYear(), next.getMonth(), next.getDate()));
+  };
+  // Pinch on the month: Compact ↔ Stacked ↔ Details.
+  const pinchView = (direction: 1 | -1) => {
+    const i = MONTH_VIEWS.indexOf(view);
+    const next = MONTH_VIEWS[Math.min(MONTH_VIEWS.length - 1, Math.max(0, i + direction))];
+    if (next !== view) setView(next);
+  };
+
   const openModal = () => {
     setStartInput('');
     setEndInput('');
     setError('');
     setModalVisible(true);
+  };
+
+  /** Long-press on the Day timeline: add availability from that time (one hour, adjustable). */
+  const openModalAt = (minutes: number) => {
+    const hhmmOf = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+    setStartInput(hhmmOf(minutes));
+    setEndInput(hhmmOf(Math.min(minutes + 60, 23 * 60 + 59)));
+    setError('');
+    setModalVisible(true);
+  };
+
+  /** Tap on something in the Day timeline. */
+  const onDayEventPress = (e: CalendarEvent) => {
+    if (e.kind === 'available') {
+      const slot = getFreeSlots(e.date).find((sl) => sl.id === e.id && sl.start === e.start);
+      if (slot) confirmRemoveAvailable(slot);
+      return;
+    }
+    const a = appointments.find((x) => x.id === e.id);
+    if (!a) {
+      const legacy = bookedSlots.find((sl) => sl.id === e.id);
+      if (legacy) confirmCancelBooking(legacy);
+      return;
+    }
+    // Android shows at most three buttons; tapping outside closes it there.
+    const close: AlertButton[] = Platform.OS === 'ios' ? [{ text: 'Close', style: 'cancel' }] : [];
+    const buttons: AlertButton[] = a.status === 'pending'
+      ? [
+          { text: 'Accept', onPress: () => void answerRequest(a, true) },
+          { text: 'Decline…', style: 'destructive', onPress: () => setCancelling(a) },
+          { text: 'Chat', onPress: () => openChat(a) },
+          ...close,
+        ]
+      : [
+          { text: 'Add to phone calendar', onPress: () => void addAppointmentToCalendar(a, 'creator') },
+          { text: 'Chat', onPress: () => openChat(a) },
+          ...(canCancel(a) ? [{ text: 'Cancel booking…', style: 'destructive' as const, onPress: () => setCancelling(a) }] : []),
+          ...close,
+        ];
+    Alert.alert(
+      `${handle(a.customer_name)} · ${e.start}–${e.end}`,
+      [
+        a.status === 'pending' ? 'Booking request, waiting for your answer' : null,
+        e.subtitle,
+        `${a.total_minutes} min · ${formatKr(a.total_price)}`,
+        a.customer_note ? `“${a.customer_note}”` : null,
+      ].filter(Boolean).join('\n'),
+      buttons,
+      { cancelable: true },
+    );
   };
 
   const saveSlot = async () => {
@@ -458,12 +548,14 @@ export default function CalendarCreator() {
     <SafeAreaView style={styles.container}>
       {/* Header with + button */}
       <View style={styles.header}>
-        <View style={{ width: 28 }} />
+        <View style={styles.headerSide} />
         <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
-        <View style={{ width: 28 }} />
+        <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
+          <ViewMenu view={view} onChange={setView} />
+        </View>
       </View>
 
-      <ScrollView refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView ref={scrollRef} refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
         {/* Next Booking */}
         <View style={styles.nextUp}>
           <Text style={styles.nextUpLabel}>Next Booking</Text>
@@ -487,63 +579,36 @@ export default function CalendarCreator() {
           onChat={openChat}
         />
 
-        {/* Month switcher */}
-        <View style={styles.monthRow}>
-          <TouchableOpacity onPress={() => changeMonth(-1)} hitSlop={10}>
-            <Ionicons name="chevron-back" size={22} color={colors.ink} />
-          </TouchableOpacity>
-          <Text style={styles.monthText}>
-            {MONTHS[month]} {year}
-          </Text>
-          <TouchableOpacity onPress={() => changeMonth(1)} hitSlop={10}>
-            <Ionicons name="chevron-forward" size={22} color={colors.ink} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Weekday labels */}
-        <View style={styles.weekRow}>
-          {WEEKDAYS.map((d) => (
-            <Text key={d} style={styles.weekday}>
-              {d}
-            </Text>
-          ))}
-        </View>
-
-        {/* Day grid */}
-        <View style={styles.grid}>
-          {cells.map((day, i) => {
-            if (day === null) return <View key={i} style={styles.cell} />;
-            const key = dateKey(year, month, day);
-            const isToday = key === todayKey;
-            const isSelected = key === selected;
-            const isNextBooking = key === nextUp?.date;
-            return (
-              <TouchableOpacity key={i} style={styles.cell} onPress={() => setSelected(key)}>
-                <View
-                  style={[
-                    styles.dayCircle,
-                    isToday && styles.todayCircle,
-                    isSelected && styles.selectedCircle,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.dayText,
-                      isSelected && styles.selectedText,
-                      isToday && !isSelected && styles.todayText,
-                    ]}
-                  >
-                    {day}
-                  </Text>
-                  {/* Small yellow star on the day of the next booking */}
-                  {isNextBooking && <Image source={STAR} style={styles.nextStar} />}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        {view === 'day' ? (
+          // Opens scrolled to the morning.
+          <View onLayout={(e) => scrollRef.current?.scrollTo({ y: e.nativeEvent.layout.y + 7.5 * HOUR_HEIGHT, animated: false })}>
+            <DayTimeline
+              dateKey={selected}
+              todayKey={todayKey}
+              events={byDate[selected] ?? []}
+              onChangeDay={changeDay}
+              onToday={() => selectDay(todayKey)}
+              onEventPress={onDayEventPress}
+              onLongPressTime={openModalAt}
+            />
+          </View>
+        ) : (
+          <MonthGrid
+            view={view}
+            year={year}
+            month={month}
+            onChangeMonth={changeMonth}
+            todayKey={todayKey}
+            selected={selected}
+            onSelectDay={setSelected}
+            events={byDate}
+            starDate={nextUp?.date}
+            onPinch={pinchView}
+          />
+        )}
 
         {/* Available slots for selected day */}
+        {view !== 'day' && <>
         <View style={styles.slotsHeader}>
           <Text style={styles.slotsTitle}>Available<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
           <TouchableOpacity onPress={openModal} hitSlop={10} accessibilityLabel="Add available slot">
@@ -617,6 +682,7 @@ export default function CalendarCreator() {
           ))}
           {bookedForDay.map(renderSlot)}
         </View>
+        </>}
       </ScrollView>
 
       {cancelling && (
@@ -689,6 +755,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   title: { fontSize: 20 },
+  headerSide: { flex: 1 },
   nextUp: {
     marginHorizontal: 16,
     marginTop: 8,
@@ -702,44 +769,6 @@ const styles = StyleSheet.create({
   nextUpRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   nextUpStar: { width: 18, height: 18, alignSelf: 'flex-start', marginTop: -2, marginLeft: -5 }, // up and to the right of the date/time
   nextUpDetail: { fontSize: 15, marginTop: 4, color: colors.background }, // service · person
-  nextStar: { position: 'absolute', top: 4, right: -4, width: 14, height: 14 }, // up and to the right of the number
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-  },
-  monthText: { fontSize: 18, color: colors.ink, fontFamily: fonts.title },
-  weekRow: { flexDirection: 'row', paddingHorizontal: 8 },
-  weekday: {
-    width: `${100 / 7}%`,
-    textAlign: 'center',
-    color: colors.inkMuted,
-    fontSize: 13,
-    paddingBottom: 6,
-  },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 8 },
-  cell: {
-    width: `${100 / 7}%`,
-    height: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  todayCircle: { borderColor: colors.wine },
-  selectedCircle: { backgroundColor: colors.pink, borderColor: colors.pink },
-  dayText: { fontSize: 16, color: colors.ink },
-  todayText: { color: colors.ink, fontWeight: '700' },
-  selectedText: { color: colors.wine, fontWeight: '700' },
   slotsHeader: {
     flexDirection: 'row',
     alignItems: 'center',

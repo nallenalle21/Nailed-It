@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState, type ComponentRef } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import StarredTitle from '../../components/StarredTitle';
 import { handle } from '../../utils/handle';
@@ -22,10 +22,13 @@ import BookingModal from '../../components/BookingModal';
 import BookingDetailsModal from '../../components/BookingDetailsModal';
 import ReasonDialog from '../../components/ReasonDialog';
 import { syncBookingReminders } from '../../services/reminders';
+import MonthGrid from '../../components/calendar/MonthGrid';
+import DayTimeline, { HOUR_HEIGHT } from '../../components/calendar/DayTimeline';
+import ViewMenu from '../../components/calendar/ViewMenu';
+import { MONTH_VIEWS, eventsByDate, useCalendarView, type CalendarEvent } from '../../components/calendar/types';
 
 const STAR = require('../../../assets/images/star.png');
 
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -77,6 +80,9 @@ export default function CalendarUser() {
   const [cancelling, setCancelling] = useState<Appointment | null>(null);
   const [cancelBusyId, setCancelBusyId] = useState<string | null>(null);
   const navigation = useNavigation<any>();
+  // Compact / Stacked / Details / Day, remembered on this phone.
+  const [view, setView] = useCalendarView('calendarView.customer');
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   // Same as Explore: the public profile lives in the Vendors tab.
   const goToProfile = (vendorId: string) => {
@@ -114,14 +120,17 @@ export default function CalendarUser() {
       .sort((a, b) => a.appointment_date.localeCompare(b.appointment_date) || a.start_time.localeCompare(b.start_time))[0] ?? null;
   const daySlots = appointments.filter((a) => a.appointment_date === selected);
 
-  // Month grid (weeks start on Monday)
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const offset = (new Date(year, month, 1).getDay() + 6) % 7;
-  const cells: (number | null)[] = [
-    ...Array(offset).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-  while (cells.length % 7 !== 0) cells.push(null);
+  // What the calendar views draw: blue = booked, wine = waiting for approval, grey = not happening.
+  const events: CalendarEvent[] = appointments.map((a) => ({
+    id: a.id,
+    date: a.appointment_date,
+    start: hhmm(a.start_time),
+    end: hhmm(a.end_time),
+    title: handle(a.creator_name),
+    subtitle: a.services.map((s) => s.name).join(', '),
+    kind: a.status === 'confirmed' ? 'booked' : a.status === 'pending' && !isRequestExpired(a) ? 'request' : 'inactive',
+  }));
+  const byDate = eventsByDate(events);
 
   const changeMonth = (delta: number) => {
     const d = new Date(year, month + delta, 1);
@@ -129,15 +138,36 @@ export default function CalendarUser() {
     setMonth(d.getMonth());
   };
 
+  /** Pick a day; the month shown follows it (so Day view and the month stay in step). */
+  const selectDay = (key: string) => {
+    const [y, m] = key.split('-').map(Number);
+    setSelected(key);
+    setYear(y);
+    setMonth(m - 1);
+  };
+  const changeDay = (delta: number) => {
+    const [y, m, d] = selected.split('-').map(Number);
+    const next = new Date(y, m - 1, d + delta);
+    selectDay(dateKey(next.getFullYear(), next.getMonth(), next.getDate()));
+  };
+  // Pinch on the month: Compact ↔ Stacked ↔ Details.
+  const pinchView = (direction: 1 | -1) => {
+    const i = MONTH_VIEWS.indexOf(view);
+    const next = MONTH_VIEWS[Math.min(MONTH_VIEWS.length - 1, Math.max(0, i + direction))];
+    if (next !== view) setView(next);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View style={{ width: 28 }} />
+        <View style={styles.headerSide} />
         <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
-        <View style={{ width: 28 }} />
+        <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
+          <ViewMenu view={view} onChange={setView} />
+        </View>
       </View>
 
-      <ScrollView refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView ref={scrollRef} refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
         {/* Next Up */}
         <View style={styles.nextUp}>
           <Text style={styles.nextUpLabel}>Next Booking</Text>
@@ -175,63 +205,35 @@ export default function CalendarUser() {
           </View>
         )}
 
-        {/* Month switcher */}
-        <View style={styles.monthRow}>
-          <TouchableOpacity onPress={() => changeMonth(-1)} hitSlop={10}>
-            <Ionicons name="chevron-back" size={22} color={colors.ink} />
-          </TouchableOpacity>
-          <Text style={styles.monthText}>
-            {MONTHS[month]} {year}
-          </Text>
-          <TouchableOpacity onPress={() => changeMonth(1)} hitSlop={10}>
-            <Ionicons name="chevron-forward" size={22} color={colors.ink} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Weekday labels */}
-        <View style={styles.weekRow}>
-          {WEEKDAYS.map((d) => (
-            <Text key={d} style={styles.weekday}>
-              {d}
-            </Text>
-          ))}
-        </View>
-
-        {/* Day grid */}
-        <View style={styles.grid}>
-          {cells.map((day, i) => {
-            if (day === null) return <View key={i} style={styles.cell} />;
-            const key = dateKey(year, month, day);
-            const isToday = key === todayKey;
-            const isSelected = key === selected;
-            const isNextBooking = key === nextUp?.appointment_date;
-            return (
-              <TouchableOpacity key={i} style={styles.cell} onPress={() => setSelected(key)}>
-                <View
-                  style={[
-                    styles.dayCircle,
-                    isToday && styles.todayCircle,
-                    isSelected && styles.selectedCircle,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.dayText,
-                      isSelected && styles.selectedText,
-                      isToday && !isSelected && styles.todayText,
-                    ]}
-                  >
-                    {day}
-                  </Text>
-                  {/* Small yellow star on the day of the next booking */}
-                  {isNextBooking && <Image source={STAR} style={styles.nextStar} />}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        {view === 'day' ? (
+          // Opens scrolled to the morning.
+          <View onLayout={(e) => scrollRef.current?.scrollTo({ y: e.nativeEvent.layout.y + 7.5 * HOUR_HEIGHT, animated: false })}>
+            <DayTimeline
+              dateKey={selected}
+              todayKey={todayKey}
+              events={byDate[selected] ?? []}
+              onChangeDay={changeDay}
+              onToday={() => selectDay(todayKey)}
+              onEventPress={(e) => setViewing(appointments.find((a) => a.id === e.id) ?? null)}
+            />
+          </View>
+        ) : (
+          <MonthGrid
+            view={view}
+            year={year}
+            month={month}
+            onChangeMonth={changeMonth}
+            todayKey={todayKey}
+            selected={selected}
+            onSelectDay={setSelected}
+            events={byDate}
+            starDate={nextUp?.appointment_date}
+            onPinch={pinchView}
+          />
+        )}
 
         {/* Bookings for selected day */}
+        {view !== 'day' && <>
         <View style={styles.slotsHeader}>
           <Text style={styles.slotsTitle}>my bookings<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
         </View>
@@ -279,6 +281,7 @@ export default function CalendarUser() {
             </View>
           ))}
         </View>
+        </>}
       </ScrollView>
       <RefreshStar refreshing={pull.refreshing} y={120} />
 
@@ -337,6 +340,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   title: { fontSize: 20 },
+  headerSide: { flex: 1 },
   nextUp: {
     marginHorizontal: 16,
     marginTop: 8,
@@ -350,44 +354,6 @@ const styles = StyleSheet.create({
   nextUpRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   nextUpStar: { width: 18, height: 18, alignSelf: 'flex-start', marginTop: -2, marginLeft: -5 }, // up and to the right of the date/time
   nextUpDetail: { fontSize: 15, marginTop: 4, color: colors.background }, // service · person
-  nextStar: { position: 'absolute', top: 4, right: -4, width: 14, height: 14 }, // up and to the right of the number
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-  },
-  monthText: { fontSize: 18, color: colors.ink, fontFamily: fonts.title },
-  weekRow: { flexDirection: 'row', paddingHorizontal: 8 },
-  weekday: {
-    width: `${100 / 7}%`,
-    textAlign: 'center',
-    color: colors.inkMuted,
-    fontSize: 13,
-    paddingBottom: 6,
-  },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 8 },
-  cell: {
-    width: `${100 / 7}%`,
-    height: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  todayCircle: { borderColor: colors.wine },
-  selectedCircle: { backgroundColor: colors.pink, borderColor: colors.pink },
-  dayText: { fontSize: 16, color: colors.ink },
-  todayText: { color: colors.ink, fontWeight: '700' },
-  selectedText: { color: colors.wine, fontWeight: '700' },
   slotsHeader: {
     paddingHorizontal: 16,
     paddingTop: 16,
