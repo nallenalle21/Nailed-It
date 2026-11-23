@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../services/supabase';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
+import ExploreSearch from '../../components/ExploreSearch';
 import PriceRangeSlider from '../../components/PriceRangeSlider';
 import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
 import { getSavedTargetIds } from '../../services/wishlist';
@@ -13,7 +14,6 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  TextInput,
   TouchableOpacity,
   ScrollView,
   Modal,
@@ -157,7 +157,8 @@ export default function ExploreCreator({ navigation }: any) {
     }
   }, [feedLoading]);
 
-  const [query, setQuery] = useState('');
+  // Text the photo feed is filtered by; typing in the search only searches people (see ExploreSearch).
+  const [feedQuery, setFeedQuery] = useState('');
   const [services, setServices] = useState<string[]>([]);         // several can be chosen
   const [serviceDraft, setServiceDraft] = useState<string[]>([]); // edited in the sheet until Save
   const [priceRange, setPriceRange] = useState<PriceRange | null>(null); // null = any price
@@ -336,7 +337,7 @@ export default function ExploreCreator({ navigation }: any) {
   }, [inspoPosts, goToProfile]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = feedQuery.trim().toLowerCase();
     return TECHS.filter((t) => {
       if (services.length && !services.some(sv => t.services.includes(sv))) return false;
       if (priceRange && !inPriceRange(t.price, priceRange)) return false;
@@ -351,7 +352,7 @@ export default function ExploreCreator({ navigation }: any) {
         return false;
       return true;
     });
-  }, [query, services, priceRange]);
+  }, [feedQuery, services, priceRange]);
 
   // The masonry feed is based on real images; prices/services come from that
   // creator's own services. Date availability and geography are not connected yet.
@@ -367,7 +368,7 @@ export default function ExploreCreator({ navigation }: any) {
   }, [offeredServices]);
 
   const filteredPosts = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = feedQuery.trim().toLowerCase();
     const selectedServices = services.map(sv => sv.toLowerCase());
     return inspoPosts.filter(post => {
       const offered = servicesByVendor.get(post.vendorId) ?? [];
@@ -390,7 +391,7 @@ export default function ExploreCreator({ navigation }: any) {
 
       return true;
     });
-  }, [inspoPosts, servicesByVendor, query, services, priceRange]);
+  }, [inspoPosts, servicesByVendor, feedQuery, services, priceRange]);
 
   const filtersActive = services.length > 0 || !!priceRange || !!date;
   const clearFilters = () => {
@@ -443,91 +444,83 @@ export default function ExploreCreator({ navigation }: any) {
             />
           }
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 32 }}
         >
-          {/* PART 1: search + filters */}
-          <View style={styles.searchRow}>
-            <View style={styles.searchBox}>
-              <Ionicons name="search" size={18} color={colors.blue} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="search nail techs, areas, styles"
-                value={query}
-                onChangeText={setQuery}
-                returnKeyType="search"
-              />
-              {query ? (
-                <TouchableOpacity onPress={() => setQuery('')} hitSlop={10}>
-                  <Ionicons name="close-circle" size={18} color="#bbb" />
-                </TouchableOpacity>
-              ) : null}
+          {/* PART 1: search (people, Instagram-style) + filters */}
+          <ExploreSearch
+            feedQuery={feedQuery}
+            onFeedQueryChange={setFeedQuery}
+            onOpenProfile={goToProfile}
+            placeholder="search nail techs"
+            accessory={
+              <TouchableOpacity
+                style={styles.filterButton}
+                onPress={() => setFilterMenu(true)}
+                accessibilityLabel="Filter by service, price and date"
+              >
+                <Ionicons name="options-outline" size={22} color={colors.blue} />
+                {filtersActive ? <View style={styles.filterDot} /> : null}
+              </TouchableOpacity>
+            }
+          >
+            {/* PART 2: map */}
+            <View style={styles.mapHeader}>
+              <View style={styles.starTitle}>
+                <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
+                <Text style={styles.sectionTitle}>find your Nail tech</Text>
+              </View>
             </View>
-            <TouchableOpacity
-              style={styles.filterButton}
-              onPress={() => setFilterMenu(true)}
-              accessibilityLabel="Filter by service, price and date"
-            >
-              <Ionicons name="options-outline" size={22} color={colors.blue} />
-              {filtersActive ? <View style={styles.filterDot} /> : null}
-            </TouchableOpacity>
-          </View>
+            <View style={styles.mapWrap}>
+              <MapView style={styles.map} initialRegion={STOCKHOLM}>
+                {filtered.map((t) => (
+                  <Marker
+                    key={t.id}
+                    coordinate={{ latitude: t.lat, longitude: t.lng }}
+                    title={t.name}
+                    description={`${t.area} · from ${t.price} kr`}
+                    anchor={{ x: 0.5, y: 1 }}        // Android: pin tip on the location
+                    centerOffset={{ x: 0, y: -18 }}   // iOS: same, half the 36pt pin height
+                  >
+                    <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
+                  </Marker>
+                ))}
+              </MapView>
+            </View>
 
-          {/* PART 2: map */}
-          <View style={styles.mapHeader}>
-            <View style={styles.starTitle}>
-              <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
-              <Text style={styles.sectionTitle}>find your Nail tech</Text>
-            </View>
-          </View>
-          <View style={styles.mapWrap}>
-            <MapView style={styles.map} initialRegion={STOCKHOLM}>
-              {filtered.map((t) => (
-                <Marker
-                  key={t.id}
-                  coordinate={{ latitude: t.lat, longitude: t.lng }}
-                  title={t.name}
-                  description={`${t.area} · from ${t.price} kr`}
-                  anchor={{ x: 0.5, y: 1 }}        // Android: pin tip on the location
-                  centerOffset={{ x: 0, y: -18 }}   // iOS: same, half the 36pt pin height
-                >
-                  <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
-                </Marker>
-              ))}
-            </MapView>
-          </View>
-
-          {/* PART 3: real artwork feed */}
-          <View style={styles.feedHeading}>
-            <View style={styles.starTitle}>
-              <Image source={require('../../../assets/images/star.png')} style={styles.star} />
-              <Text style={styles.sectionTitle}>get inspired</Text>
-            </View>
-            <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
-              <Ionicons name="refresh" size={21} color={colors.blue} />
-            </TouchableOpacity>
-          </View>
-          {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
-          {feedError ? (
-            <View style={styles.feedStatus}>
-              <Text style={styles.feedError}>Could not load creator photos: {feedError}</Text>
-              <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)}>
-                <Text style={styles.retryText}>Try again</Text>
+            {/* PART 3: real artwork feed */}
+            <View style={styles.feedHeading}>
+              <View style={styles.starTitle}>
+                <Image source={require('../../../assets/images/star.png')} style={styles.star} />
+                <Text style={styles.sectionTitle}>get inspired</Text>
+              </View>
+              <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
+                <Ionicons name="refresh" size={21} color={colors.blue} />
               </TouchableOpacity>
             </View>
-          ) : feedLoading && inspoPosts.length === 0 ? (
-            <ActivityIndicator style={{ marginTop: 28 }} color={colors.primary} size="large" />
-          ) : filteredPosts.length === 0 ? (
-            <Text style={styles.feedEmpty}>
-              {inspoPosts.length === 0
-                ? 'No creator photos have been uploaded yet.'
-                : 'No photos match these filters.'}
-            </Text>
-          ) : (
-            <View style={styles.feed}>
-              <View style={styles.feedCol}>{colA.map(renderTile)}</View>
-              <View style={styles.feedCol}>{colB.map(renderTile)}</View>
-            </View>
-          )}
+            {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
+            {feedError ? (
+              <View style={styles.feedStatus}>
+                <Text style={styles.feedError}>Could not load creator photos: {feedError}</Text>
+                <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)}>
+                  <Text style={styles.retryText}>Try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : feedLoading && inspoPosts.length === 0 ? (
+              <ActivityIndicator style={{ marginTop: 28 }} color={colors.primary} size="large" />
+            ) : filteredPosts.length === 0 ? (
+              <Text style={styles.feedEmpty}>
+                {inspoPosts.length === 0
+                  ? 'No creator photos have been uploaded yet.'
+                  : 'No photos match these filters.'}
+              </Text>
+            ) : (
+              <View style={styles.feed}>
+                <View style={styles.feedCol}>{colA.map(renderTile)}</View>
+                <View style={styles.feedCol}>{colB.map(renderTile)}</View>
+              </View>
+            )}
+          </ExploreSearch>
         </ScrollView>
         <RefreshStar refreshing={pulling} y={40} />
 
