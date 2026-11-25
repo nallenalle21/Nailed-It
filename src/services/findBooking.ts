@@ -81,15 +81,61 @@ export async function findBookableCreators(options: {
   }));
 }
 
-export type BookSort = 'next' | 'price';
+export type BookSort = 'next' | 'priceLow' | 'priceHigh';
 
-/** Soonest free time first (no times last), or cheapest first (no price last). */
+/** The "Sort by" options in Explore's filter menu, in the order they're shown. */
+export const BOOK_SORTS: { value: BookSort; label: string }[] = [
+  { value: 'next', label: 'First available' },
+  { value: 'priceLow', label: 'Price: low to high' },
+  { value: 'priceHigh', label: 'Price: high to low' },
+];
+
+/**
+ * First available: soonest free time first (no times last).
+ * Price: by from-price, cheapest or most expensive first (no price last either way).
+ * Ties keep the other order, so equal prices still show the soonest time first.
+ */
 export function sortBookable(list: BookableCreator[], sort: BookSort): BookableCreator[] {
   const first = (c: BookableCreator) => (c.nextTimes[0] ? `${c.nextTimes[0].date} ${c.nextTimes[0].start}` : '~');
+  // Plain string comparison (not localeCompare, which sorts the "~" placeholder before dates).
+  const byTime = (a: BookableCreator, b: BookableCreator) => (first(a) < first(b) ? -1 : first(a) > first(b) ? 1 : 0);
+  const byPrice = (a: BookableCreator, b: BookableCreator, dir: 1 | -1) => {
+    if (a.fromPrice === null || b.fromPrice === null) return (a.fromPrice === null ? 1 : 0) - (b.fromPrice === null ? 1 : 0);
+    return (a.fromPrice - b.fromPrice) * dir;
+  };
   return [...list].sort((a, b) =>
-    sort === 'price'
-      ? (a.fromPrice ?? Infinity) - (b.fromPrice ?? Infinity) || first(a).localeCompare(first(b))
-      : first(a).localeCompare(first(b)) || (a.fromPrice ?? Infinity) - (b.fromPrice ?? Infinity));
+    sort === 'priceLow' ? byPrice(a, b, 1) || byTime(a, b)
+      : sort === 'priceHigh' ? byPrice(a, b, -1) || byTime(a, b)
+      : byTime(a, b) || byPrice(a, b, 1));
+}
+
+/**
+ * Like findBookableCreators, but with several services (Explore's filter lets you pick more
+ * than one). Each freelancer is shown once, with the service that has the soonest free time.
+ */
+export async function findBookableCreatorsForServices(options: {
+  date?: string | null;
+  services: string[];
+}): Promise<BookableCreator[]> {
+  if (options.services.length <= 1) {
+    return findBookableCreators({ date: options.date, service: options.services[0] ?? null });
+  }
+  const lists = await Promise.all(
+    options.services.map((service) => findBookableCreators({ date: options.date, service })),
+  );
+  const first = (c: BookableCreator) => (c.nextTimes[0] ? `${c.nextTimes[0].date} ${c.nextTimes[0].start}` : '~');
+  const byId = new Map<string, BookableCreator>();
+  for (const c of lists.flat()) {
+    const seen = byId.get(c.id);
+    if (!seen) {
+      byId.set(c.id, c);
+      continue;
+    }
+    const prices = [seen.fromPrice, c.fromPrice].filter((p): p is number => p !== null);
+    const best = first(c) < first(seen) ? c : seen;
+    byId.set(c.id, { ...best, fromPrice: prices.length ? Math.min(...prices) : null });
+  }
+  return [...byId.values()];
 }
 
 /** "Today 16:15", "Tomorrow 10:00", "Fri 28 Nov 14:30" */
@@ -102,4 +148,37 @@ export function freeTimeLabel(t: FreeTime, now = new Date()) {
     : diff === 1 ? 'Tomorrow'
     : day.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   return `${prefix} ${t.start}`;
+}
+
+// ---------- Sorting the photo feed ("Feed" tab) ----------
+
+/** 'newest' = no sort chosen: the feed's own order (newest photos first). */
+export type FeedSort = 'newest' | BookSort;
+
+/** The "Sort by" options in the Feed tab (the same as Book). Nothing chosen = newest first. */
+export const FEED_SORTS: { value: FeedSort; label: string }[] = BOOK_SORTS;
+
+/**
+ * Sorts feed photos by their nail tech: first free time ("2026-11-27 14:30", null = none) or
+ * from-price (null = none). Photos without one go last. "Newest" keeps the feed's own order,
+ * and equal values keep it too (so each nail tech's newest photos still come first).
+ */
+export function sortFeedPosts<T extends { vendorId: string }>(
+  posts: T[],
+  sort: FeedSort,
+  fromPrice: (vendorId: string) => number | null,
+  firstFree: (vendorId: string) => string | null,
+): T[] {
+  if (sort === 'newest') return posts;
+  const order = new Map(posts.map((p, i) => [p, i]));
+  const nullsLast = (a: number | string | null, b: number | string | null, dir: 1 | -1) => {
+    if (a === null || b === null) return (a === null ? 1 : 0) - (b === null ? 1 : 0);
+    return (a < b ? -1 : a > b ? 1 : 0) * dir;
+  };
+  return [...posts].sort((a, b) => {
+    const byKey = sort === 'next'
+      ? nullsLast(firstFree(a.vendorId), firstFree(b.vendorId), 1)
+      : nullsLast(fromPrice(a.vendorId), fromPrice(b.vendorId), sort === 'priceLow' ? 1 : -1);
+    return byKey || order.get(a)! - order.get(b)!;
+  });
 }

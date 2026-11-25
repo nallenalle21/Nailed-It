@@ -87,7 +87,7 @@ export default function CalendarUser() {
   // Same as Explore: the public profile lives in the Vendors tab.
   const goToProfile = (vendorId: string) => {
     setViewing(null);
-    navigation.navigate('Vendors', { screen: 'VendorProfile', params: { vendorId } });
+    navigation.navigate('Vendors', { screen: 'VendorProfile', params: { vendorId, from: 'Calendar' } });
   };
 
   // Reload on focus so a freshly confirmed booking shows up.

@@ -10,6 +10,7 @@ import { handle } from '../../utils/handle';
 import { colors, fonts } from '../../theme';
 import React, { useCallback, useRef, useState } from 'react';
 import {
+  BackHandler,
   ActivityIndicator,
   Alert,
   Image,
@@ -88,6 +89,19 @@ const theme = {
 
 export default function VendorProfile({ navigation, route }: any) {
   const vendorId: string | undefined = route?.params?.vendorId;
+  // The tab this profile was opened from (Explore, Wishlist, Calendar): Back returns there,
+  // e.g. to the photo that was open. Without it, a plain "go back".
+  const from: string | undefined = route?.params?.from;
+  const goBack = useCallback(() => {
+    if (from) navigation.navigate(from);
+    else navigation.goBack();
+  }, [from, navigation]);
+  // Android's back button does the same while this profile is shown.
+  useFocusEffect(useCallback(() => {
+    if (!from) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { goBack(); return true; });
+    return () => sub.remove();
+  }, [from, goBack]));
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
@@ -240,7 +254,7 @@ export default function VendorProfile({ navigation, route }: any) {
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Go back"
-          onPress={() => navigation.goBack()}
+          onPress={goBack}
           style={styles.toolbarButton}
         >
           <Ionicons name="arrow-back" size={23} color={theme.ink} />

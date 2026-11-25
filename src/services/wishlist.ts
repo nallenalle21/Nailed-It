@@ -184,3 +184,31 @@ export async function getWishlistSnapshot(): Promise<WishlistSnapshot> {
   }
   return { boards, entries };
 }
+
+// ---------- "Nail it" (the heart): the default "faves" collection ----------
+
+const FAVES_NAME = 'faves';
+const isFaves = (b: WishlistBoard) => b.name.toLowerCase() === FAVES_NAME;
+
+/** The "faves" collection; made again if the user deleted it (liking needs somewhere to go). */
+export async function getFavesBoard(): Promise<WishlistBoard> {
+  const faves = (await getWishlistBoards()).find(isFaves);
+  return faves ?? createWishlistBoard(FAVES_NAME);
+}
+
+/** Ids of everything in "faves" (the filled hearts). */
+export async function getFaveIds(kind: SaveKind): Promise<Set<string>> {
+  const faves = (await getWishlistBoards(false)).find(isFaves);
+  if (!faves) return new Set();
+  const column = kind === 'post' ? 'post_id' : 'vendor_id';
+  const { data, error } = await supabase.from('wishlist_items').select(column)
+    .eq('board_id', faves.id).not(column, 'is', null);
+  if (error) throw error;
+  return new Set((data ?? []).map(row => (row as any)[column] as string));
+}
+
+/** Tap the heart: add to / remove from "faves". */
+export async function setFave(kind: SaveKind, targetId: string, faved: boolean): Promise<void> {
+  const faves = await getFavesBoard();
+  await setBoardSaved(faves.id, kind, targetId, faved);
+}

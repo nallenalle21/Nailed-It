@@ -91,7 +91,7 @@ function VendorsStack() {
 
 function CreatorTabs() {
   return (
-    <Tab.Navigator screenOptions={({ route }) => ({
+    <Tab.Navigator backBehavior="history" screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
       ...TAB_BAR_STYLE,
@@ -108,7 +108,7 @@ function CreatorTabs() {
 
 function UserTabs() {
   return (
-    <Tab.Navigator screenOptions={({ route }) => ({
+    <Tab.Navigator backBehavior="history" screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
       ...TAB_BAR_STYLE,

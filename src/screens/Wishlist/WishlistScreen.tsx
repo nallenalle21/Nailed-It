@@ -10,6 +10,9 @@ import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { setStatusBarStyle } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../../components/AppText';
+import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
+import BookingModal from '../../components/BookingModal';
+import type { BookableCreator, FreeTime } from '../../services/findBooking';
 import SparkleStars, { HIDDEN_SPINNER, RefreshStar, type SparkleStarsHandle } from '../../components/SparkleStars';
 import { colors, fonts } from '../../theme';
 import {
@@ -67,6 +70,10 @@ function BoardCover({ entries }: { entries: WishlistEntry[] }) {
   );
 }
 
+// Swiping back from a collection: how far (pt) and how fast (ms) the swipe has to be.
+const SWIPE_BACK_DISTANCE = 70;
+const SWIPE_BACK_MS = 600;
+
 export default function WishlistScreen({ navigation }: any) {
   const isFocused = useIsFocused();
 
@@ -93,7 +100,9 @@ export default function WishlistScreen({ navigation }: any) {
   const [formName, setFormName] = useState('');
   const [formBoard, setFormBoard] = useState<WishlistBoard | null>(null);
   const [busy, setBusy] = useState(false);
-  const [previewPost, setPreviewPost] = useState<WishlistEntry | null>(null);
+  // Tapping a saved photo opens the same photo view as the Explore feed (like, profile, free times…).
+  const [sheetPostId, setSheetPostId] = useState<string | null>(null);
+  const [booking, setBooking] = useState<{ creator: { id: string; name: string }; date: string | null; start: string | null; serviceIds: string[] | null } | null>(null);
   const [menuBoard, setMenuBoard] = useState<WishlistBoard | null>(null); // press-and-hold menu
   const [itemMenu, setItemMenu] = useState<WishlistEntry | null>(null);    // remove-item pop-up
 
@@ -206,7 +215,7 @@ export default function WishlistScreen({ navigation }: any) {
 
   const goToVendor = (vendorId: string) => {
     navigation.navigate('Vendors', {
-      screen: 'VendorProfile', params: { vendorId },
+      screen: 'VendorProfile', params: { vendorId, from: 'Wishlist' }, // back returns here (to the open photo)
     });
   };
   const openCreate = () => { setFormMode('create'); setFormName(''); setFormBoard(null); };
@@ -253,10 +262,24 @@ export default function WishlistScreen({ navigation }: any) {
     if (!entry) return;
     try {
       await removeWishlistItem(entry.id, entry.boardId);
-      setPreviewPost(null); // the photo is gone, so close its preview too
       await reload();
     } catch (error) { Alert.alert('Could not remove item', errorMessage(error)); }
   };
+
+  // ---- The Explore photo view, for this collection's photos ----
+  const sheetPhotos = useMemo<SheetPhoto[]>(() => boardEntries
+    .filter(e => e.kind === 'post' && e.imageUri)
+    .map(e => ({ id: e.targetId, uri: e.imageUri!, caption: e.caption, vendorId: e.vendorId, creatorName: e.creatorName })),
+  [boardEntries]);
+  // Photos saved in any collection (the heart is filled for these).
+  const savedPostIds = useMemo(() => new Set(entries.filter(e => e.kind === 'post').map(e => e.targetId)), [entries]);
+  /** A free time pre-chooses its service; "All times" leaves the service open (same as Explore). */
+  const bookCreator = (c: BookableCreator, time: FreeTime | null) => {
+    setBooking({ creator: { id: c.id, name: c.username }, date: time?.date ?? null, start: time?.start ?? null, serviceIds: time ? [c.serviceId] : null });
+  };
+  // The open photo stays open while you book or look at the profile, so Back/Cancel returns to it.
+  // Going back to all collections closes it.
+  useEffect(() => { setSheetPostId(null); }, [selectedBoardId]);
 
   const renderItemMenu = () => (
     <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={() => setItemMenu(null)}>
@@ -281,6 +304,15 @@ export default function WishlistScreen({ navigation }: any) {
     touchStart.current = null;
     if (!start || dragId) return;
     const { pageX, pageY, timestamp } = e.nativeEvent;
+    // Inside a collection: a quick sideways swipe goes back to all collections (like the back arrow).
+    const dx = pageX - start.x;
+    const dy = pageY - start.y;
+    if (selectedBoard && !sheetPostId && !drag.current && Math.abs(dx) >= SWIPE_BACK_DISTANCE && Math.abs(dx) >= Math.abs(dy) * 2
+      && timestamp - start.t < SWIPE_BACK_MS) {
+      setSelectedBoardId(null);
+      setEditing(false);
+      return;
+    }
     const isTap = Math.hypot(pageX - start.x, pageY - start.y) < 10 && timestamp - start.t < 400;
     if (isTap && isBackground(start.target, [rootRef, headerRef, scrollRef, contentRef, cardsRef, gridRef as AnyRef, emptyRef])) {
       sparkles.current?.popAt(pageX, pageY);
@@ -387,7 +419,7 @@ export default function WishlistScreen({ navigation }: any) {
                     onPress={() => {
                       if (editing) { removeItem(entry); return; }
                       if (entry.kind === 'vendor') goToVendor(entry.vendorId);
-                      else setPreviewPost(entry);
+                      else setSheetPostId(entry.targetId);
                     }}
                     accessibilityLabel={entry.kind === 'vendor' ? `Open ${entry.creatorName} profile` : 'Expand saved photo'}
                   >
@@ -449,8 +481,8 @@ export default function WishlistScreen({ navigation }: any) {
           </View>
         </TouchableOpacity>
       </Modal>
-      {/* Remove-item pop-up on its own (edit mode). Over the photo preview it's drawn inside that modal instead. */}
-      <Modal visible={itemMenu !== null && previewPost === null} transparent animationType="fade" onRequestClose={() => setItemMenu(null)}>
+      {/* Remove-item pop-up (edit mode) */}
+      <Modal visible={itemMenu !== null} transparent animationType="fade" onRequestClose={() => setItemMenu(null)}>
         {renderItemMenu()}
       </Modal>
       <Modal visible={formMode !== null} transparent animationType="fade" onRequestClose={() => setFormMode(null)}>
@@ -467,28 +499,29 @@ export default function WishlistScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
-      <Modal visible={previewPost !== null} transparent animationType="fade" onRequestClose={() => setPreviewPost(null)}>
-        <View style={styles.shade}>
-          <View style={styles.previewDialog}>
-            <View style={styles.dialogHeader}>
-              <Text style={styles.dialogTitle}>{handle(previewPost?.creatorName)}</Text>
-              <TouchableOpacity onPress={() => setPreviewPost(null)} accessibilityLabel="Close photo"><Ionicons name="close" size={23} color="#151A17" /></TouchableOpacity>
-            </View>
-            {previewPost?.imageUri && <Image source={{ uri: previewPost.imageUri }} style={styles.previewImage} resizeMode="contain" />}
-            <Text style={styles.previewCaption}>{previewPost?.caption}</Text>
-            <View style={styles.previewActions}>
-              <TouchableOpacity onPress={() => { const id = previewPost!.vendorId; setPreviewPost(null); goToVendor(id); }} style={styles.action}>
-                <Ionicons name="person-outline" size={19} color={ACCENT}/><Text style={styles.actionText}>creator profile</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => removeItem(previewPost!)} style={styles.action}>
-                <Ionicons name="trash-outline" size={18} color={ACCENT}/><Text style={styles.actionText}>remove</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          {/* Keeps the photo up behind the pop-up; cancel returns to it */}
-          {itemMenu && <View style={StyleSheet.absoluteFill}>{renderItemMenu()}</View>}
-        </View>
-      </Modal>
+      {/* The same photo view as in Explore: swipe through this collection's photos */}
+      <PhotoBookSheet
+        photos={sheetPhotos}
+        openId={sheetPostId}
+        savedIds={savedPostIds}
+        onSavedChanged={() => void reload(true)}
+        onClose={() => setSheetPostId(null)}
+        onBook={bookCreator}
+        onOpenProfile={goToVendor}
+      />
+      <BookingModal
+        visible={booking !== null}
+        creator={booking?.creator ?? null}
+        initialDate={booking?.date ?? null}
+        initialStart={booking?.start}
+        initialServiceIds={booking?.serviceIds}
+        onClose={() => setBooking(null)}
+        onBooked={(a) => {
+          setSheetPostId(null); // booked: done with the photo too
+          setBooking(null);
+          Alert.alert(a.status === 'pending' ? 'Request sent!' : 'Appointment booked!', 'See it in your calendar.');
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -549,10 +582,6 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderColor: '#E5DFD7', borderRadius: 12, padding: 13, color: '#151A17', marginBottom: 12 },
   primaryButton: { backgroundColor: colors.pink, padding: 14, alignItems: 'center', borderRadius: 12 },
   primaryText: { color: colors.wine, fontWeight: '700' },
-  previewDialog: { backgroundColor: '#FFF', padding: 16, borderRadius: 18 },
-  previewImage: { width: '100%', height: 305, backgroundColor: '#F8F5F6', borderRadius: 10 },
-  previewCaption: { color: '#494148', fontSize: 13, marginTop: 8 },
-  previewActions: { marginTop: 14, flexDirection: 'row', justifyContent: 'space-between' },
   action: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: 9 },
   actionText: { color: ACCENT, fontWeight: '700', fontSize: 12 },
 });

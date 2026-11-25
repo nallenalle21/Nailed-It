@@ -1,5 +1,4 @@
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
-import { handle } from '../../utils/handle';
 import { colors, fonts } from '../../theme';
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
@@ -13,8 +12,17 @@ import ExploreSearch from '../../components/ExploreSearch';
 import CreatorPopup from '../../components/CreatorPopup';
 import BookView from '../../components/BookView';
 import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { freeTimeLabel, type BookableCreator, type FreeTime } from '../../services/findBooking';
+import {
+  BOOK_SORTS,
+  FEED_SORTS,
+  findBookableCreatorsForServices,
+  freeTimeLabel,
+  sortFeedPosts,
+  type BookSort,
+  type BookableCreator,
+  type FeedSort,
+  type FreeTime,
+} from '../../services/findBooking';
 import { fetchCreatorsAvailableOn, toDateKey } from '../../services/booking';
 import { getSavedTargetIds } from '../../services/wishlist';
 import {
@@ -26,8 +34,10 @@ import {
   ScrollView,
   Modal,
   Platform,
+  Pressable,
   StyleSheet,
   Animated,
+  GestureResponderEvent,
   LayoutChangeEvent,
   ViewInstance,
 } from 'react-native';
@@ -68,7 +78,9 @@ const formatPriceRange = ([lo, hi]: PriceRange) => `${lo}–${hi === PRICE_MAX ?
 /** point: where the pin goes (the freelancer's area); missing → placeholder spot. */
 type MapCreator = { id: string; name: string; point?: { latitude: number; longitude: number } | null };
 
-const EXPLORE_MODE_KEY = 'explore.mode';
+// Swiping between the Explore tabs: how far (pt) and how fast (ms) a swipe has to be.
+const SWIPE_MIN_DISTANCE = 70;
+const SWIPE_MAX_MS = 600;
 
 // Creators do not store coordinates yet, so each pin gets a stable spot near central
 // Stockholm derived from the creator id. Replace with real work-location coordinates.
@@ -140,6 +152,19 @@ function getTargets(x: number, y: number, w: number, h: number): Targets {
   };
 }
 
+/** A row in the filter menu; `any` is what's shown when it's not set (default "Any"). */
+type FilterPage = 'menu' | 'sort' | 'service' | 'price' | 'date';
+
+// The filter sheet is the same height on every page: exactly what the date page needs
+// (title + the iOS calendar + "Any date"), so there's no empty space under it.
+// The calendar's real height is measured once on the phone; this is the first guess.
+let measuredCalendarHeight = 330;
+const FILTER_SHEET_PADDING = 20;   // top and bottom
+const FILTER_HEADER_HEIGHT = 40;   // title row + its margin
+const FILTER_ROW_HEIGHT = 50;      // one option row ("Any date")
+const FILTER_MIN_BODY = (SERVICES.length + 1) * FILTER_ROW_HEIGHT; // the service list + "remove selected filters"
+type FilterRow = { icon: keyof typeof Ionicons.glyphMap; label: string; value: string | null; any?: string; page: FilterPage };
+
 export default function ExploreUser({ navigation }: any) {
   const [inspoPosts, setInspoPosts] = useState<InspoItem[]>([]);
   const [offeredServices, setOfferedServices] = useState<OfferedService[]>([]);
@@ -160,17 +185,17 @@ export default function ExploreUser({ navigation }: any) {
       setPulling(false);
     }
   }, [feedLoading]);
-  const [creators, setCreators] = useState<MapCreator[]>([]);
   // null = no date filter (or still loading); otherwise creators with free time on the chosen date
   const [availability, setAvailability] = useState<{ key: string; ids: Set<string> } | null>(null);
   const [popupCreator, setPopupCreator] = useState<MapCreator | null>(null);
   const [bookingCreator, setBookingCreator] = useState<MapCreator | null>(null);
   // From the Book view / photo sheet: the time and service to pre-select in the booking sheet.
-  const [bookingPreset, setBookingPreset] = useState<{ date: string | null; start: string | null; serviceIds: string[] } | null>(null);
+  const [bookingPreset, setBookingPreset] = useState<{ date: string | null; start: string | null; serviceIds: string[] | null } | null>(null);
   // Explore shows either the inspiration feed or the "Book" view; remembered on this phone.
   const [mode, setMode] = useState<'inspire' | 'book'>('inspire');
   // Photo tapped in the feed (opens the "Book this look" sheet).
   const [sheetPhoto, setSheetPhoto] = useState<SheetPhoto | null>(null);
+  // The open photo stays open while you book or look at the profile, so Back/Cancel returns to it.
 
   // Text the photo feed is filtered by; typing in the search only searches people (see ExploreSearch).
   const [feedQuery, setFeedQuery] = useState('');
@@ -183,11 +208,21 @@ export default function ExploreUser({ navigation }: any) {
   const availabilityKey = dateKey ? `${dateKey}|${feedRefresh}` : null;
   const availableIds = availability && availability.key === availabilityKey ? availability.ids : null;
 
-  const [serviceModal, setServiceModal] = useState(false);
-  const [priceModal, setPriceModal] = useState(false);
   const [priceDraft, setPriceDraft] = useState<PriceRange>(FULL_PRICE_RANGE); // edited in the sheet until Save
-  const [dateOpen, setDateOpen] = useState(false);
+  // Which part of the filter sheet is shown, and the edits made there until Save.
+  const [filterPage, setFilterPage] = useState<FilterPage>('menu');
+  const [dateDraft, setDateDraft] = useState<Date | null>(null);
+  const [androidDatePicker, setAndroidDatePicker] = useState(false);
+  const [calendarHeight, setCalendarHeight] = useState(measuredCalendarHeight);
+  const filterSheetHeight = FILTER_SHEET_PADDING * 2 + FILTER_HEADER_HEIGHT + Math.max(
+    Platform.OS === 'ios' ? calendarHeight + FILTER_ROW_HEIGHT : 0,
+    FILTER_MIN_BODY, // Android has no inline calendar: the service list is the biggest page there
+  );
   const [filterMenu, setFilterMenu] = useState(false);
+  // "Sort by" in the filter menu: each tab has its own (Book: nail techs, Feed: photos).
+  const [sort, setSort] = useState<BookSort>('next');
+  const [feedSort, setFeedSort] = useState<FeedSort>('newest');
+  const [sortDraft, setSortDraft] = useState<FeedSort>('newest');
 
   // hold-and-drag state
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -243,11 +278,6 @@ export default function ExploreUser({ navigation }: any) {
           id: string; username: string | null; display_name: string | null; area_lat: number | null; area_lng: number | null;
         }[];
         const nameById = new Map(creators.map(p => [p.id, p.username?.trim() || 'Unnamed creator']));
-        if (active) setCreators(creators.map(p => ({
-          id: p.id,
-          name: nameById.get(p.id)!,
-          point: p.area_lat != null && p.area_lng != null ? { latitude: p.area_lat, longitude: p.area_lng } : null,
-        })));
         const allPosts: VendorPost[] = [];
 
         for (let from = 0; ; from += POSTS_PAGE_SIZE) {
@@ -311,28 +341,46 @@ export default function ExploreUser({ navigation }: any) {
   const goToProfile = useCallback((vendorId: string) => {
     navigation.navigate('Vendors', {
       screen: 'VendorProfile',
-      params: { vendorId },
+      params: { vendorId, from: 'Explore' }, // the profile's back goes back here (to the open photo)
     });
   }, [navigation]);
 
-  useEffect(() => {
-    AsyncStorage.getItem(EXPLORE_MODE_KEY)
-      .then((saved) => { if (saved === 'book' || saved === 'inspire') setMode(saved); })
-      .catch(() => {});
-  }, []);
   const changeMode = (next: 'inspire' | 'book') => {
     setMode(next);
-    AsyncStorage.setItem(EXPLORE_MODE_KEY, next).catch(() => {});
+  };
+
+  // Swipe sideways anywhere on Explore to switch between "Feed" and "Book".
+  // We only watch the finger (never take over the touch), so scrolling, the long-press drag,
+  // the map and the photo strips keep working: those block the switch while they're used.
+  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  const swipeBlocked = useRef(false);
+  const blockTabSwipe = useCallback(() => { swipeBlocked.current = true; }, []);
+  const onSwipeTouchStart = (e: GestureResponderEvent) => {
+    const { pageX, pageY, touches } = e.nativeEvent;
+    swipeStart.current = touches.length > 1 ? null : { x: pageX, y: pageY, t: Date.now() };
+  };
+  const onSwipeTouchEnd = (e: GestureResponderEvent) => {
+    const start = swipeStart.current;
+    const blocked = swipeBlocked.current;
+    swipeStart.current = null;
+    swipeBlocked.current = false;
+    if (!start || blocked) return;
+    const dx = e.nativeEvent.pageX - start.x;
+    const dy = e.nativeEvent.pageY - start.y;
+    // A quick, clearly sideways swipe (not a scroll or a slow drag).
+    if (Math.abs(dx) < SWIPE_MIN_DISTANCE || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - start.t > SWIPE_MAX_MS) return;
+    changeMode(mode === 'inspire' ? 'book' : 'inspire');
   };
 
   /** Book from a card, the map or the photo sheet: a free time (pre-selected) or all times. */
   const bookCreator = (c: BookableCreator, time: FreeTime | null) => {
-    setSheetPhoto(null);
-    setBookingPreset({ date: time?.date ?? null, start: time?.start ?? null, serviceIds: [c.serviceId] });
+    // A free time is for one service, so pre-choose it; "All times" leaves the service open.
+    setBookingPreset({ date: time?.date ?? null, start: time?.start ?? null, serviceIds: time ? [c.serviceId] : null });
     setBookingCreator({ id: c.id, name: c.username });
   };
 
   const handleDragStart = useCallback((id: string, x: number, y: number) => {
+    swipeBlocked.current = true; // dragging a photo isn't a tab swipe
     const lx = x - offsetRef.current.x;
     const ly = y - offsetRef.current.y;
     const state = {
@@ -429,32 +477,85 @@ export default function ExploreUser({ navigation }: any) {
     return () => { active = false; };
   }, [dateKey, availabilityKey]);
 
-  const filtered = useMemo(
-    () => creators.filter(c => matchesFilters(c.id, c.name)),
-    [creators, matchesFilters],
-  );
-
   const filteredPosts = useMemo(
     () => inspoPosts.filter(post =>
       matchesFilters(post.vendorId, post.creatorName, post.caption, PROTOTYPE_POSTS_MATCH_ALL_FILTERS)),
     [inspoPosts, matchesFilters],
   );
 
-  const filtersActive = services.length > 0 || !!priceRange || !!date;
+  const filtersActive = services.length > 0 || !!priceRange || !!date || (mode === 'book' ? sort !== 'next' : feedSort !== 'newest');
   const clearFilters = () => {
     setServices([]);
     setPriceRange(null);
     setDate(null);
+    setSort('next');
+    setFeedSort('newest');
   };
   // Close the filter menu first: iOS can't present a second modal while one is still open.
-  const openFromFilterMenu = (open: () => void) => {
+  // ---- Filter sheet: menu → a filter (edit a draft) → Save applies it and goes back to the menu ----
+  const openFilterPage = (page: FilterPage) => {
+    if (page === 'sort') setSortDraft(mode === 'book' ? sort : feedSort);
+    if (page === 'service') setServiceDraft(services);
+    if (page === 'price') setPriceDraft(priceRange ?? FULL_PRICE_RANGE);
+    if (page === 'date') setDateDraft(date);
+    setFilterPage(page);
+  };
+  const saveFilterPage = () => {
+    if (filterPage === 'sort') {
+      if (mode === 'book') setSort(sortDraft === 'newest' ? 'next' : sortDraft);
+      else setFeedSort(sortDraft);
+    }
+    if (filterPage === 'service') setServices(serviceDraft);
+    if (filterPage === 'price') setPriceRange(isFullPriceRange(priceDraft) ? null : priceDraft);
+    if (filterPage === 'date') setDate(dateDraft);
+    setFilterPage('menu');
+  };
+  const closeFilters = () => {
     setFilterMenu(false);
-    setTimeout(open, 350);
+    setFilterPage('menu');
+    setAndroidDatePicker(false);
   };
 
   // Split inspo into two columns for the masonry layout
-  const colA = filteredPosts.filter((_, i) => i % 2 === 0);
-  const colB = filteredPosts.filter((_, i) => i % 2 === 1);
+  // ---- Feed "Sort by": by the nail tech's from-price or next free time ----
+  // From-price: their cheapest service (among the chosen services, if any are filtered).
+  const vendorFromPrice = useCallback((vendorId: string) => {
+    const selected = services.map(sv => sv.toLowerCase());
+    const prices = (servicesByVendor.get(vendorId) ?? [])
+      .filter(s => !selected.length || selected.some(sel =>
+        s.name.toLowerCase().includes(sel) || (s.category || '').toLowerCase().includes(sel)))
+      .map(s => Number(s.discount_price ?? s.price))
+      .filter(Number.isFinite);
+    return prices.length ? Math.min(...prices) : null;
+  }, [servicesByVendor, services]);
+
+  // Next free times are only loaded when the feed is sorted by them.
+  const firstFreeKey = feedSort === 'next' ? `${dateKey ?? ''}|${services.join(',')}|${feedRefresh}` : null;
+  const [firstFree, setFirstFree] = useState<{ key: string; byVendor: Map<string, string> } | null>(null);
+  useEffect(() => {
+    if (!firstFreeKey) return;
+    let active = true;
+    findBookableCreatorsForServices({ date: dateKey, services })
+      .then((list) => {
+        if (!active) return;
+        const byVendor = new Map<string, string>();
+        for (const c of list) if (c.nextTimes[0]) byVendor.set(c.id, `${c.nextTimes[0].date} ${c.nextTimes[0].start}`);
+        setFirstFree({ key: firstFreeKey, byVendor });
+      })
+      .catch((e) => console.warn('[Explore] Could not load free times for sorting:', e instanceof Error ? e.message : e));
+    return () => { active = false; };
+  }, [firstFreeKey]); // eslint-disable-line react-hooks/exhaustive-deps -- the key covers date, services and refresh
+
+  const sortedPosts = useMemo(() => sortFeedPosts(
+    filteredPosts,
+    feedSort,
+    vendorFromPrice,
+    (vendorId) => (firstFree?.key === firstFreeKey ? firstFree.byVendor.get(vendorId) ?? null : null),
+  ), [filteredPosts, feedSort, vendorFromPrice, firstFree, firstFreeKey]);
+
+  // Split inspo into two columns for the masonry layout (left, right, left, right… in sorted order)
+  const colA = sortedPosts.filter((_, i) => i % 2 === 0);
+  const colB = sortedPosts.filter((_, i) => i % 2 === 1);
 
   const photosByCreator = useMemo(() => {
     const byCreator: Record<string, string[]> = {};
@@ -482,6 +583,9 @@ export default function ExploreUser({ navigation }: any) {
         style={{ flex: 1 }}
         collapsable={false}
         onLayout={onOverlayLayout}
+        onTouchStart={onSwipeTouchStart}
+        onTouchEnd={onSwipeTouchEnd}
+        onTouchCancel={() => { swipeStart.current = null; swipeBlocked.current = false; }}
       >
         <ScrollView
           scrollEnabled={scrollEnabled}
@@ -506,8 +610,8 @@ export default function ExploreUser({ navigation }: any) {
             feedQuery={feedQuery}
             onFeedQueryChange={setFeedQuery}
             onOpenProfile={goToProfile}
-            placeholder="search nail techs"
-            accessory={mode === 'book' ? null : (
+            placeholder="search services"
+            accessory={(
               <TouchableOpacity
                 style={styles.filterButton}
                 onPress={() => setFilterMenu(true)}
@@ -529,62 +633,50 @@ export default function ExploreUser({ navigation }: any) {
                   accessibilityState={{ selected: mode === m }}
                 >
                   <Ionicons name={m === 'inspire' ? 'sparkles-outline' : 'calendar-outline'} size={16} color={mode === m ? colors.wine : colors.ink} />
-                  <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{m === 'inspire' ? 'Get inspired' : 'Book'}</Text>
+                  <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{m === 'inspire' ? 'Feed' : 'Book'}</Text>
                 </TouchableOpacity>
               ))}
             </View>
 
             {mode === 'book' ? (
-              <BookView
-                photosByCreator={photosByCreator}
-                serviceOptions={SERVICES}
-                refreshKey={feedRefresh}
-                onBook={bookCreator}
-                onOpenProfile={goToProfile}
-                renderMap={(list) => (
-                  <MapView style={styles.map} initialRegion={STOCKHOLM}>
-                    {list.map((c) => (
-                      <Marker
-                        key={c.id}
-                        coordinate={c.areaPoint ?? demoCoordinate(c.id)}
-                        title={c.displayName}
-                        description={c.nextTimes[0] ? `Next free: ${freeTimeLabel(c.nextTimes[0])} · tap to book` : 'No free times soon · tap for profile'}
-                        anchor={{ x: 0.5, y: 1 }}
-                        centerOffset={{ x: 0, y: -18 }}
-                        onCalloutPress={() => (c.nextTimes[0] ? bookCreator(c, c.nextTimes[0]) : goToProfile(c.id))}
-                      >
-                        <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
-                      </Marker>
-                    ))}
-                  </MapView>
-                )}
-              />
+              <>
+                <View style={styles.mapHeader}>
+                  <View style={styles.starTitle}>
+                    <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
+                    <Text style={styles.sectionTitle}>find your services</Text>
+                  </View>
+                </View>
+                <BookView
+                  photosByCreator={photosByCreator}
+                  services={services}
+                  date={date ? toDateKey(date) : null}
+                  matchesPrice={priceRange ? (price) => inPriceRange(price, priceRange) : null}
+                  sort={sort}
+                  refreshKey={feedRefresh}
+                  onBook={bookCreator}
+                  onOpenProfile={goToProfile}
+                  onSidewaysTouch={blockTabSwipe}
+                  renderMap={(list) => (
+                    <MapView style={styles.map} initialRegion={STOCKHOLM}>
+                      {list.map((c) => (
+                        <Marker
+                          key={c.id}
+                          coordinate={c.areaPoint ?? demoCoordinate(c.id)}
+                          title={c.displayName}
+                          description={c.nextTimes[0] ? `Next free: ${freeTimeLabel(c.nextTimes[0])} · tap to book` : 'No free times soon · tap for profile'}
+                          anchor={{ x: 0.5, y: 1 }}
+                          centerOffset={{ x: 0, y: -18 }}
+                          onCalloutPress={() => (c.nextTimes[0] ? bookCreator(c, c.nextTimes[0]) : goToProfile(c.id))}
+                        >
+                          <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
+                        </Marker>
+                      ))}
+                    </MapView>
+                  )}
+                />
+              </>
             ) : <>
-            {/* PART 2: map */}
-            <View style={styles.mapHeader}>
-              <View style={styles.starTitle}>
-                <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
-                <Text style={styles.sectionTitle}>find your Nail tech</Text>
-              </View>
-            </View>
-            <View style={styles.mapWrap}>
-              <MapView style={styles.map} initialRegion={STOCKHOLM}>
-                {filtered.map((c) => (
-                  <Marker
-                    key={c.id}
-                    coordinate={c.point ?? demoCoordinate(c.id)}
-                    title={handle(c.name)}
-                    anchor={{ x: 0.5, y: 1 }}        // Android: pin tip on the location
-                    centerOffset={{ x: 0, y: -18 }}   // iOS: same, half the 36pt pin height
-                    onPress={() => setPopupCreator(c)}
-                  >
-                    <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
-                  </Marker>
-                ))}
-              </MapView>
-            </View>
-
-            {/* PART 3: real artwork feed */}
+            {/* PART 2: real artwork feed */}
             <View style={styles.feedHeading}>
               <View style={styles.starTitle}>
                 <Image source={require('../../../assets/images/star.png')} style={styles.star} />
@@ -648,166 +740,175 @@ export default function ExploreUser({ navigation }: any) {
         )}
       </View>
 
-      {/* Filter menu: opened from the icon next to the search bar */}
-      <Modal visible={filterMenu} transparent animationType="slide" onRequestClose={() => setFilterMenu(false)}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setFilterMenu(false)}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Filters</Text>
-            {([
-              { icon: 'brush-outline', label: 'Service', value: services.length > 1 ? `${services.length} selected` : services[0] ?? null,
-                open: () => { setServiceDraft(services); setServiceModal(true); } },
-              { icon: 'cash-outline', label: 'Price', value: priceRange ? formatPriceRange(priceRange) : null,
-                open: () => { setPriceDraft(priceRange ?? FULL_PRICE_RANGE); setPriceModal(true); } },
-              { icon: 'calendar-outline', label: 'Date', value: date ? formatDate(date) : null, open: () => setDateOpen(true) },
-            ] as const).map(row => (
-              <TouchableOpacity key={row.label} style={styles.option} onPress={() => openFromFilterMenu(row.open)}>
-                <View style={styles.filterMenuLabel}>
-                  <Ionicons name={row.icon} size={18} color={colors.ink} />
-                  <Text style={styles.optionText}>{row.label}</Text>
-                </View>
-                <View style={styles.filterMenuLabel}>
-                  <Text style={[styles.optionText, row.value ? styles.optionActive : styles.filterMenuAny]}>
-                    {row.value ?? 'Any'}
-                  </Text>
-                  <Ionicons name="chevron-forward" size={16} color="#888" />
-                </View>
-              </TouchableOpacity>
-            ))}
-            {filtersActive ? (
-              <TouchableOpacity style={styles.clearFilters} onPress={clearFilters}>
-                <Text style={styles.clearFiltersText}>Clear filters</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Service filter: pick several, then Save */}
-      <Modal visible={serviceModal} transparent animationType="slide" onRequestClose={() => setServiceModal(false)}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setServiceModal(false)}>
-          <View style={styles.sheet}>
-            <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { marginBottom: 0 }]}>Type of service</Text>
-              <TouchableOpacity
-                style={styles.saveButton}
-                onPress={() => {
-                  setServices(serviceDraft);
-                  setServiceModal(false);
-                }}
-              >
-                <Text style={styles.saveText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-            {SERVICES.map(opt => {
-              const active = serviceDraft.includes(opt);
-              return (
-                <TouchableOpacity
-                  key={opt}
-                  style={styles.option}
-                  onPress={() => setServiceDraft(d => active ? d.filter(x => x !== opt) : [...d, opt])}
-                >
-                  <Text style={[styles.optionText, active && styles.optionActive]}>{opt}</Text>
-                  {active && <Ionicons name="checkmark" size={20} color={colors.ink} />}
-                </TouchableOpacity>
-              );
-            })}
-            <TouchableOpacity
-              style={[styles.option, { borderBottomWidth: 0 }]}
-              onPress={() => {
-                setServiceDraft([]); // stays open; Save applies it
-              }}
-            >
-              <Text style={[styles.optionText, styles.showAllText]}>remove selected filters</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Price filter: drag the slider, then Save */}
-      <Modal visible={priceModal} transparent animationType="slide" onRequestClose={() => setPriceModal(false)}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setPriceModal(false)}>
-          <View style={styles.sheet}>
-            <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { marginBottom: 0 }]}>Price range</Text>
-              <TouchableOpacity
-                style={styles.saveButton}
-                onPress={() => {
-                  setPriceRange(isFullPriceRange(priceDraft) ? null : priceDraft);
-                  setPriceModal(false);
-                }}
-              >
-                <Text style={styles.saveText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.sliderWrap}>
-              <PriceRangeSlider
-                min={PRICE_MIN}
-                max={PRICE_MAX}
-                step={PRICE_STEP}
-                value={priceDraft}
-                onChange={setPriceDraft}
-              />
-            </View>
-            <TouchableOpacity
-              style={[styles.option, { borderBottomWidth: 0 }]}
-              onPress={() => setPriceDraft(FULL_PRICE_RANGE)} // stays open; Save applies it
-            >
-              <Text style={[styles.optionText, styles.anyPriceText, isFullPriceRange(priceDraft) && styles.optionBold]}>Any price</Text>
-              {isFullPriceRange(priceDraft) && <Ionicons name="checkmark" size={20} color={colors.blue} />}
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Date filter */}
-      {Platform.OS === 'ios' ? (
-        <Modal visible={dateOpen} transparent animationType="slide" onRequestClose={() => setDateOpen(false)}>
-          <View style={styles.backdrop}>
-            <View style={styles.sheet}>
-              <Text style={styles.sheetTitle}>Choose date</Text>
-              <DateTimePicker
-                value={date ?? new Date()}
-                mode="date"
-                display="inline"
-                minimumDate={new Date()}
-                accentColor={colors.blue}
-                onChange={(_, d) => d && setDate(d)}
-              />
-              <View style={styles.dateButtons}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDate(null);
-                    setDateOpen(false);
-                  }}
-                >
-                  <Text style={styles.cancel}>Clear</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.doneButton}
-                  onPress={() => {
-                    if (!date) setDate(new Date());
-                    setDateOpen(false);
-                  }}
-                >
-                  <Text style={styles.doneText}>Done</Text>
-                </TouchableOpacity>
+      {/* Filters: one sheet. The menu lists the filters; each one opens in the same sheet
+          with a back arrow and Save, and Save brings you back to the menu (not out of it). */}
+      <Modal visible={filterMenu} transparent animationType="slide" onRequestClose={closeFilters}>
+        <View style={styles.backdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeFilters} accessibilityLabel="Close filters" />
+          <View style={[styles.sheet, { height: filterSheetHeight }]}>
+            {/* Measures the iOS calendar once (invisible), so the sheet fits it exactly */}
+            {Platform.OS === 'ios' && calendarHeight === 330 && (
+              <View style={styles.measure} pointerEvents="none"
+                onLayout={(e) => {
+                  measuredCalendarHeight = Math.ceil(e.nativeEvent.layout.height) || 330;
+                  setCalendarHeight(measuredCalendarHeight);
+                }}>
+                <DateTimePicker value={new Date()} mode="date" display="inline" onChange={() => {}} />
               </View>
-            </View>
+            )}
+            {filterPage === 'menu' ? (
+              <>
+                <View style={styles.sheetHeader}>
+                  <Text style={[styles.sheetTitle, { marginBottom: 0 }]}>Filters</Text>
+                  <TouchableOpacity style={styles.saveButton} onPress={closeFilters}>
+                    <Text style={styles.saveText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={styles.filterBody} showsVerticalScrollIndicator={false}>
+                {([
+                  // Sort by: each tab has its own order (shown in grey while it's the default).
+                  mode === 'book'
+                    ? { icon: 'swap-vertical-outline', label: 'Sort by', any: 'First available', page: 'sort',
+                        value: sort === 'next' ? null : BOOK_SORTS.find(o => o.value === sort)!.label }
+                    : { icon: 'swap-vertical-outline', label: 'Sort by', page: 'sort',
+                        value: feedSort === 'newest' ? null : FEED_SORTS.find(o => o.value === feedSort)!.label },
+                  { icon: 'brush-outline', label: 'Service', page: 'service',
+                    value: services.length > 1 ? `${services.length} selected` : services[0] ?? null },
+                  { icon: 'cash-outline', label: 'Price', page: 'price', value: priceRange ? formatPriceRange(priceRange) : null },
+                  { icon: 'calendar-outline', label: 'Date', page: 'date', value: date ? formatDate(date) : null },
+                ] as FilterRow[]).map(row => (
+                  <TouchableOpacity key={row.label} style={styles.option} onPress={() => openFilterPage(row.page)}>
+                    <View style={styles.filterMenuLabel}>
+                      <Ionicons name={row.icon} size={18} color={colors.ink} />
+                      <Text style={styles.optionText}>{row.label}</Text>
+                    </View>
+                    <View style={styles.filterMenuLabel}>
+                      <Text style={[styles.optionText, row.value ? styles.optionActive : styles.filterMenuAny]}>
+                        {row.value ?? row.any ?? 'Any'}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={16} color="#888" />
+                    </View>
+                  </TouchableOpacity>
+                ))}
+                {filtersActive ? (
+                  <TouchableOpacity style={styles.clearFilters} onPress={clearFilters}>
+                    <Text style={styles.clearFiltersText}>Clear filters</Text>
+                  </TouchableOpacity>
+                ) : null}
+                </ScrollView>
+              </>
+            ) : (
+              <>
+                {/* ← back to the menu (discards changes) · title · Save (applies, back to the menu) */}
+                <View style={styles.sheetHeader}>
+                  <View style={styles.headerLeft}>
+                    <TouchableOpacity onPress={() => setFilterPage('menu')} hitSlop={12} accessibilityLabel="Back to filters">
+                      <Ionicons name="chevron-back" size={24} color={colors.ink} />
+                    </TouchableOpacity>
+                    <Text style={[styles.sheetTitle, { marginBottom: 0 }]}>
+                      {filterPage === 'sort' ? 'Sort by' : filterPage === 'service' ? 'Type of service' : filterPage === 'price' ? 'Price range' : 'Choose date'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity style={styles.saveButton} onPress={saveFilterPage}>
+                    <Text style={styles.saveText}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={styles.filterBody} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                {filterPage === 'sort' && (mode === 'book' ? BOOK_SORTS : FEED_SORTS).map(opt => {
+                  const active = sortDraft === opt.value;
+                  return (
+                    <TouchableOpacity key={opt.value} style={styles.option} onPress={() => setSortDraft(opt.value)}
+                      accessibilityState={{ selected: active }}>
+                      <Text style={[styles.optionText, active && styles.optionActive]}>{opt.label}</Text>
+                      {active && <Ionicons name="checkmark" size={20} color={colors.ink} />}
+                    </TouchableOpacity>
+                  );
+                })}
+                {filterPage === 'sort' && mode !== 'book' && sortDraft !== 'newest' && (
+                  // Feed only: back to no sort (newest photos first)
+                  <TouchableOpacity style={[styles.option, { borderBottomWidth: 0 }]} onPress={() => setSortDraft('newest')}>
+                    <Text style={[styles.optionText, styles.showAllText]}>remove selected sort</Text>
+                  </TouchableOpacity>
+                )}
+
+                {filterPage === 'service' && (
+                  <>
+                    {SERVICES.map(opt => {
+                      const active = serviceDraft.includes(opt);
+                      return (
+                        <TouchableOpacity
+                          key={opt}
+                          style={styles.option}
+                          onPress={() => setServiceDraft(d => active ? d.filter(x => x !== opt) : [...d, opt])}
+                        >
+                          <Text style={[styles.optionText, active && styles.optionActive]}>{opt}</Text>
+                          {active && <Ionicons name="checkmark" size={20} color={colors.ink} />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <TouchableOpacity style={[styles.option, { borderBottomWidth: 0 }]} onPress={() => setServiceDraft([])}>
+                      <Text style={[styles.optionText, styles.showAllText]}>remove selected filters</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+
+                {filterPage === 'price' && (
+                  <>
+                    <View style={styles.sliderWrap}>
+                      <PriceRangeSlider min={PRICE_MIN} max={PRICE_MAX} step={PRICE_STEP} value={priceDraft} onChange={setPriceDraft} />
+                    </View>
+                    <TouchableOpacity style={[styles.option, { borderBottomWidth: 0 }]} onPress={() => setPriceDraft(FULL_PRICE_RANGE)}>
+                      <Text style={[styles.optionText, styles.anyPriceText, isFullPriceRange(priceDraft) && styles.optionBold]}>Any price</Text>
+                      {isFullPriceRange(priceDraft) && <Ionicons name="checkmark" size={20} color={colors.blue} />}
+                    </TouchableOpacity>
+                  </>
+                )}
+
+                {filterPage === 'date' && (
+                  <>
+                    {Platform.OS === 'ios' ? (
+                      <DateTimePicker
+                        value={dateDraft ?? new Date()}
+                        mode="date"
+                        display="inline"
+                        minimumDate={new Date()}
+                        accentColor={colors.blue}
+                        onChange={(_, d) => d && setDateDraft(d)}
+                      />
+                    ) : (
+                      // Android shows its calendar as a dialog: open it from here.
+                      <TouchableOpacity style={styles.option} onPress={() => setAndroidDatePicker(true)}>
+                        <Text style={[styles.optionText, dateDraft && styles.optionActive]}>
+                          {dateDraft ? formatDate(dateDraft) : 'Pick a date'}
+                        </Text>
+                        <Ionicons name="calendar-outline" size={20} color={colors.ink} />
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={[styles.option, { borderBottomWidth: 0 }]} onPress={() => setDateDraft(null)}>
+                      <Text style={[styles.optionText, styles.anyPriceText, !dateDraft && styles.optionBold]}>Any date</Text>
+                      {!dateDraft && <Ionicons name="checkmark" size={20} color={colors.blue} />}
+                    </TouchableOpacity>
+                    {Platform.OS === 'android' && androidDatePicker && (
+                      <DateTimePicker
+                        value={dateDraft ?? new Date()}
+                        mode="date"
+                        minimumDate={new Date()}
+                        onChange={(e, d) => {
+                          setAndroidDatePicker(false);
+                          if (e.type === 'set' && d) setDateDraft(d);
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+                </ScrollView>
+              </>
+            )}
           </View>
-        </Modal>
-      ) : (
-        dateOpen && (
-          <DateTimePicker
-            value={date ?? new Date()}
-            mode="date"
-            minimumDate={new Date()}
-            onChange={(e, d) => {
-              setDateOpen(false);
-              if (e.type === 'set' && d) setDate(d);
-            }}
-          />
-        )
-      )}
+        </View>
+      </Modal>
+
       <CreatorPopup
         creator={bookingCreator ? null : popupCreator}
         onClose={() => setPopupCreator(null)}
@@ -815,10 +916,13 @@ export default function ExploreUser({ navigation }: any) {
         onBook={(c) => setBookingCreator(c)}
       />
       <PhotoBookSheet
-        photo={bookingCreator ? null : sheetPhoto}
+        photos={sortedPosts}
+        openId={sheetPhoto?.id ?? null}
+        savedIds={favorites}
+        onSavedChanged={() => void reloadFavorites()}
         onClose={() => setSheetPhoto(null)}
         onBook={bookCreator}
-        onOpenProfile={(id) => { setSheetPhoto(null); goToProfile(id); }}
+        onOpenProfile={goToProfile}
       />
       <BookingModal
         visible={bookingCreator !== null}
@@ -828,6 +932,7 @@ export default function ExploreUser({ navigation }: any) {
         initialServiceIds={bookingPreset?.serviceIds}
         onClose={() => { setBookingCreator(null); setBookingPreset(null); setPopupCreator(null); }}
         onBooked={(a) => {
+          setSheetPhoto(null); // booked: done with the photo too
           setBookingCreator(null);
           setBookingPreset(null);
           setPopupCreator(null);
@@ -870,7 +975,8 @@ function InspoTile({
     .onStart((e) => onStart(item.id, e.absoluteX, e.absoluteY))
     .onUpdate((e) => onMove(e.absoluteX, e.absoluteY))
     .onFinalize(() => onEnd());
-  const tap = Gesture.Tap().runOnJS(true).maxDuration(300).onEnd((_e, success) => { if (success) onTap(); });
+  // A tap is anything shorter than the long-press (350 ms), so a slightly slow tap still opens the photo.
+  const tap = Gesture.Tap().runOnJS(true).maxDuration(349).maxDistance(12).onEnd((_e, success) => { if (success) onTap(); });
   const gesture = Gesture.Exclusive(drag, tap);
 
   // Which photo failed to load, so a new photo gets a fresh try.
@@ -990,7 +1096,7 @@ const styles = StyleSheet.create({
   feedCol: { flex: 1, gap: 8 },
   tile: { borderRadius: 14, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   tileImage: { width: '100%', height: '100%' },
-  feedHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 16, marginTop: 24 },
+  feedHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 16, marginTop: 16 },
   starTitle: { position: 'relative' },
   // sits at the lower-left of the "g" in "get inspired", partly tucked behind it
   star: { position: 'absolute', width: 44, height: 44, left: -12, top: -21.5 },
@@ -1056,15 +1162,19 @@ const styles = StyleSheet.create({
   },
   toastText: { color: '#fff', fontSize: 14, fontWeight: '500' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  // Same size for the filter menu and every filter (height set in the component: fits the date page).
   sheet: {
+    maxHeight: '90%', // small phones: the content scrolls instead
     backgroundColor: colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 36,
+    padding: FILTER_SHEET_PADDING,
   },
+  measure: { position: 'absolute', left: FILTER_SHEET_PADDING, right: FILTER_SHEET_PADDING, top: 0, opacity: 0 },
+  filterBody: { flex: 1 },
   sheetTitle: { fontSize: 18, fontFamily: fonts.title, color: colors.ink, marginBottom: 8 },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 32, marginBottom: 8 },
   saveButton: { backgroundColor: colors.blue, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14 },
   saveText: { color: colors.background, fontSize: 14, fontWeight: '600' },
   option: {
@@ -1088,7 +1198,4 @@ const styles = StyleSheet.create({
     gap: 20,
     marginTop: 8,
   },
-  cancel: { fontSize: 16, color: colors.ink },
-  doneButton: { backgroundColor: colors.blue, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 8 },
-  doneText: { color: colors.background, fontSize: 16, fontWeight: '600' },
 });
