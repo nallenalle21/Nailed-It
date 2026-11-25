@@ -7,6 +7,7 @@ import { View, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator,
 import { Text } from '../../components/AppText';
 import { supabase } from '../../services/supabase';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
+import NewChat from '../../components/NewChat';
 
 export default function ChatsUser({ navigation }: any) {
   const [chats, setChats] = useState<any[]>([]);
@@ -114,6 +115,8 @@ export default function ChatsUser({ navigation }: any) {
         ListEmptyComponent={<Text style={styles.emptyText}>no messages yet</Text>}
       />
       <RefreshStar refreshing={pull.refreshing} y={155} />
+      {/* New chat: search usernames (bottom right) */}
+      <NewChat navigation={navigation} role="user" />
     </View>
   );
 }
@@ -125,7 +128,7 @@ const styles = StyleSheet.create({
   emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 80 },
   emptyText: { color: colors.inkMuted, fontSize: 15 },
   headerTitle: { fontSize: 24 },
-  listContainer: { paddingHorizontal: 20 },
+  listContainer: { paddingHorizontal: 20, paddingBottom: 96 }, // room for the new-chat button
   chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line },
   avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15, backgroundColor: colors.line },
   avatarFallback: { backgroundColor: colors.pink, alignItems: 'center', justifyContent: 'center' },

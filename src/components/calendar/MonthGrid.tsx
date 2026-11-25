@@ -21,7 +21,7 @@ const MAX_BARS = 5;
 const MAX_LINES = 4;
 
 type Props = {
-  view: Exclude<CalendarView, 'day'>;
+  view: Exclude<CalendarView, 'week'>;
   year: number;
   month: number;
   onChangeMonth: (delta: number) => void;
@@ -90,7 +90,7 @@ export default function MonthGrid({ view, year, month, onChangeMonth, todayKey, 
 }
 
 function DayCell({ view, day, isToday, isSelected, hasStar, events, onPress }: {
-  view: Exclude<CalendarView, 'day'>;
+  view: Exclude<CalendarView, 'week'>;
   day: number;
   isToday: boolean;
   isSelected: boolean;

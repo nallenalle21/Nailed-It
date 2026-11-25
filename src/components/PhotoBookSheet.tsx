@@ -14,11 +14,13 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type GestureResponderEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Text } from './AppText';
 import { colors, fonts } from '../theme';
 import { handle } from '../utils/handle';
@@ -39,8 +41,8 @@ type Props = {
   /** A photo was liked/unliked or added to/removed from a collection. */
   onSavedChanged: () => void;
   onClose: () => void;
-  /** A time chip (time) or "Book this look" (null). */
-  onBook: (creator: BookableCreator, time: FreeTime | null) => void;
+  /** A free time (time) or "All times" (null). Left out = no booking in this view (freelancers). */
+  onBook?: (creator: BookableCreator, time: FreeTime | null) => void;
   onOpenProfile: (creatorId: string) => void;
 };
 
@@ -154,6 +156,10 @@ export default function PhotoBookSheet({ photos, openId, savedIds, onSavedChange
   // (or when the pull starts above the sheet, on the dimmed area).
   const scrollY = useRef<Record<string, number>>({});
   const touchInSheet = useRef(false);
+  // While a photo is pinched (zoomed), swiping to the next photo and pull-down are paused.
+  const [zooming, setZooming] = useState(false);
+  const zoomingRef = useRef(false);
+  zoomingRef.current = zooming;
   const startedAbove = useRef(false);
   const currentId = useRef<string | null>(null);
   currentId.current = pages[index]?.id ?? null;
@@ -161,7 +167,7 @@ export default function PhotoBookSheet({ photos, openId, savedIds, onSavedChange
   const pullDown = useRef(PanResponder.create({
     // Take over only a clear downward pull, and only when the page is scrolled to the top.
     onMoveShouldSetPanResponderCapture: (_, g) =>
-      g.dy > 10 && g.dy > Math.abs(g.dx) * 1.5
+      !zoomingRef.current && g.numberActiveTouches === 1 && g.dy > 10 && g.dy > Math.abs(g.dx) * 1.5
       && (startedAbove.current || (scrollY.current[currentId.current ?? ''] ?? 0) <= 0),
     onPanResponderMove: (_, g) => slide.setValue(Math.max(0, g.dy)),
     onPanResponderRelease: (_, g) => {
@@ -214,6 +220,7 @@ export default function PhotoBookSheet({ photos, openId, savedIds, onSavedChange
               keyExtractor={(p) => p.id}
               horizontal
               pagingEnabled
+              scrollEnabled={!zooming}
               showsHorizontalScrollIndicator={false}
               initialScrollIndex={startIndex}
               getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
@@ -229,10 +236,12 @@ export default function PhotoBookSheet({ photos, openId, savedIds, onSavedChange
                   saved={isSaved(item.id)}
                   onHeart={() => setCollectionFor(item.id)}
                   onDoubleTap={() => like(item)}
+                  onZoomChange={setZooming}
                   onScrollY={(y) => { scrollY.current[item.id] = y; }}
                   onContentHeight={(h) => setContentHeights((prev) => (prev[item.id] === h ? prev : { ...prev, [item.id]: h }))}
                   onBook={onBook}
                   onOpenProfile={onOpenProfile}
+
                 />
               )}
             />
@@ -258,8 +267,10 @@ export default function PhotoBookSheet({ photos, openId, savedIds, onSavedChange
 /** One photo in the pager. `creator` is undefined while their times load, null if they have none. */
 const DOUBLE_TAP_MS = 280;
 const POP_SIZE = 96;
+// How far a photo can be pinched in.
+const MAX_ZOOM = 4;
 
-function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap, onScrollY, onContentHeight, onBook, onOpenProfile }: {
+function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap, onZoomChange, onScrollY, onContentHeight, onBook, onOpenProfile }: {
   photo: SheetPhoto;
   width: number;
   height: number;
@@ -269,11 +280,14 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
   onHeart: () => void;
   /** Double-tap on the photo: like it. */
   onDoubleTap: () => void;
+  /** A pinch-zoom started (true) or ended (false). */
+  onZoomChange: (zooming: boolean) => void;
   /** How far this page is scrolled (pull-down-to-close only works at the top). */
   onScrollY: (y: number) => void;
   /** How tall this page's content is, so the sheet can fit it. */
   onContentHeight: (h: number) => void;
-  onBook: (creator: BookableCreator, time: FreeTime | null) => void;
+  /** Left out: no free times or "All times" (freelancers can't book). */
+  onBook?: (creator: BookableCreator, time: FreeTime | null) => void;
   onOpenProfile: (creatorId: string) => void;
 }) {
   const loading = creator === undefined;
@@ -281,16 +295,55 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
   // Double-tap the photo to like it, with a big heart that pops up and fades.
   const lastTap = useRef(0);
   const [photoSize, setPhotoSize] = useState({ w: 0, h: 0 });
+
+  // Pinch to zoom (like Instagram): zooms in where your fingers are, springs back when you let go.
+  const zoom = useRef(new Animated.Value(1)).current;
+  const focus = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const [zoomed, setZoomed] = useState(false);
+  const zoomEndedAt = useRef(0);
+  const endZoom = () => {
+    zoomEndedAt.current = Date.now();
+    Animated.parallel([
+      Animated.spring(zoom, { toValue: 1, bounciness: 0, speed: 18, useNativeDriver: true }),
+      Animated.spring(focus, { toValue: { x: 0, y: 0 }, bounciness: 0, speed: 18, useNativeDriver: true }),
+    ]).start(() => setZoomed(false));
+    onZoomChange(false);
+  };
+  const pinch = Gesture.Pinch()
+    .runOnJS(true)
+    .onStart((e) => {
+      // Zoom around the point between the fingers (measured from the photo's center).
+      focus.setValue({ x: e.focalX - photoSize.w / 2, y: e.focalY - photoSize.h / 2 });
+      lastTap.current = 0; // a pinch isn't a tap
+      setZoomed(true);
+      onZoomChange(true);
+    })
+    .onUpdate((e) => zoom.setValue(Math.min(MAX_ZOOM, Math.max(1, e.scale))))
+    .onEnd(endZoom)
+    .onFinalize((_e, success) => { if (!success) endZoom(); });
+  const zoomStyle = {
+    transform: [
+      { translateX: focus.x }, { translateY: focus.y },
+      { scale: zoom },
+      { translateX: Animated.multiply(focus.x, -1) }, { translateY: Animated.multiply(focus.y, -1) },
+    ],
+  };
   const pop = useRef(new Animated.Value(0)).current;
-  const onPhotoPress = () => {
+  // Where the double-tap was (the heart pops up right there, like Instagram).
+  const [popAt, setPopAt] = useState<{ x: number; y: number } | null>(null);
+  const onPhotoPress = (e: GestureResponderEvent) => {
+    if (zoomed || Date.now() - zoomEndedAt.current < 400) return; // lifting fingers after a pinch isn't a tap
     const now = Date.now();
     if (now - lastTap.current < DOUBLE_TAP_MS) {
       lastTap.current = 0;
       onDoubleTap();
+      setPopAt({ x: e.nativeEvent.locationX, y: e.nativeEvent.locationY });
+      pop.stopAnimation();
       pop.setValue(0);
+      // Quick: pops in (~0.1 s), stays briefly, fades out (~0.15 s).
       Animated.sequence([
-        Animated.spring(pop, { toValue: 1, friction: 4, useNativeDriver: true }),
-        Animated.timing(pop, { toValue: 0, duration: 250, delay: 350, useNativeDriver: true }),
+        Animated.timing(pop, { toValue: 1, duration: 110, easing: Easing.out(Easing.back(2)), useNativeDriver: true }),
+        Animated.timing(pop, { toValue: 0, duration: 150, delay: 140, useNativeDriver: true }),
       ]).start();
     } else {
       lastTap.current = now;
@@ -302,22 +355,28 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.page}
       bounces={false} // at the top, pulling down closes the sheet instead
+      scrollEnabled={!zoomed}
       scrollEventThrottle={16}
       onScroll={(e) => onScrollY(e.nativeEvent.contentOffset.y)}
       onContentSizeChange={(_, h) => onContentHeight(Math.ceil(h))}
     >
       {/* The photo, with the heart on it in the bottom-right corner */}
       <View style={styles.photo} onLayout={(e) => setPhotoSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onPhotoPress} accessibilityHint="Double-tap to like">
-          <Image source={{ uri: photo.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-        </Pressable>
+        <GestureDetector gesture={pinch}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onPhotoPress} accessibilityHint="Double-tap to like, pinch to zoom">
+            <Animated.Image source={{ uri: photo.uri }} style={[StyleSheet.absoluteFill, zoomStyle]} resizeMode="cover" />
+          </Pressable>
+        </GestureDetector>
         <Animated.View
           pointerEvents="none"
-          style={[styles.pop, { left: photoSize.w / 2 - POP_SIZE / 2, top: photoSize.h / 2 - POP_SIZE / 2, opacity: pop, transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }] }]}
+          style={[styles.pop, {
+            left: (popAt?.x ?? photoSize.w / 2) - POP_SIZE / 2,
+            top: (popAt?.y ?? photoSize.h / 2) - POP_SIZE / 2,
+            opacity: pop, transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }] }]}
         >
           <Ionicons name="heart" size={POP_SIZE} color={colors.pink} />
         </Animated.View>
-        <TouchableOpacity
+        {!zoomed && <TouchableOpacity
           style={[styles.roundButton, styles.heartButton]}
           onPress={onHeart}
           accessibilityRole="button"
@@ -326,7 +385,7 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
           hitSlop={6}
         >
           <Ionicons name={saved ? 'heart' : 'heart-outline'} size={24} color={saved ? colors.pink : colors.wine} />
-        </TouchableOpacity>
+        </TouchableOpacity>}
       </View>
       {photo.caption ? <Text style={styles.caption}>{photo.caption}</Text> : null}
 
@@ -344,6 +403,7 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
         <Ionicons name="chevron-forward" size={18} color={colors.inkMuted} />
       </TouchableOpacity>
 
+      {onBook && <>
       {loading ? (
         <ActivityIndicator style={{ marginVertical: 16 }} color={colors.blue} />
       ) : creator && creator.nextTimes.length > 0 ? (
@@ -351,7 +411,7 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
           <Text style={styles.timesLabel}>Next free</Text>
           <View style={styles.times}>
             {creator.nextTimes.map((t) => (
-              <TouchableOpacity key={`${t.date}-${t.start}`} style={styles.time} onPress={() => onBook(creator, t)}>
+              <TouchableOpacity key={`${t.date}-${t.start}`} style={styles.time} onPress={() => onBook?.(creator, t)}>
                 <Text style={styles.timeText}>{freeTimeLabel(t)}</Text>
               </TouchableOpacity>
             ))}
@@ -366,11 +426,12 @@ function PhotoPage({ photo, width, height, creator, saved, onHeart, onDoubleTap,
       <TouchableOpacity
         style={[styles.book, !creator && styles.bookDisabled]}
         disabled={!creator}
-        onPress={() => creator && onBook(creator, null)}
+        onPress={() => creator && onBook?.(creator, null)}
       >
         <Ionicons name="calendar-outline" size={18} color={colors.wine} />
         <Text style={styles.bookText}>All times</Text>
       </TouchableOpacity>
+      </>}
     </ScrollView>
   );
 }

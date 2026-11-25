@@ -1,16 +1,15 @@
-import { useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useState } from 'react';
 import { colors } from '../../theme';
 
-/** Like Apple Calendar's "View" menu: three month densities, or one day as a timeline. */
-export type CalendarView = 'compact' | 'stacked' | 'details' | 'day';
+/** Like Apple Calendar's "View" menu: three month densities, or a week as a timeline. */
+export type CalendarView = 'compact' | 'stacked' | 'details' | 'week';
 export const MONTH_VIEWS: CalendarView[] = ['compact', 'stacked', 'details'];
 
 export const VIEW_LABELS: Record<CalendarView, string> = {
   compact: 'Compact',
   stacked: 'Stacked',
   details: 'Details',
-  day: 'Day',
+  week: 'Week',
 };
 
 /**
@@ -51,25 +50,10 @@ export function eventsByDate(events: CalendarEvent[]): Record<string, CalendarEv
 }
 
 /**
- * The chosen view, remembered on this phone (separately for the customer and freelancer
- * calendars). Starts as Compact, today's look.
+ * The calendar's view. Always starts as Compact when the app opens (the storage key is kept
+ * so the customer and freelancer calendars stay separate if we remember it again later).
  */
-export function useCalendarView(storageKey: string): [CalendarView, (view: CalendarView) => void] {
+export function useCalendarView(_storageKey: string): [CalendarView, (view: CalendarView) => void] {
   const [view, setView] = useState<CalendarView>('compact');
-
-  useEffect(() => {
-    let active = true;
-    AsyncStorage.getItem(storageKey)
-      .then((saved) => {
-        if (active && saved && saved in VIEW_LABELS) setView(saved as CalendarView);
-      })
-      .catch(() => {});
-    return () => { active = false; };
-  }, [storageKey]);
-
-  const choose = (next: CalendarView) => {
-    setView(next);
-    AsyncStorage.setItem(storageKey, next).catch(() => {});
-  };
-  return [view, choose];
+  return [view, setView];
 }

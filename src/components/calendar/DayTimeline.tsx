@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../AppText';
@@ -20,7 +21,7 @@ const dayTitle = (key: string) => {
  * Side-by-side columns for overlapping bookings (like Apple Calendar): each event gets a
  * column within its group of overlapping events, and the group's column count.
  */
-function layoutColumns(events: CalendarEvent[]) {
+export function layoutColumns(events: CalendarEvent[]) {
   const placed: { e: CalendarEvent; col: number; cols: number }[] = [];
   let group: typeof placed = [];
   let groupEnd = -1;
@@ -49,14 +50,38 @@ type Props = {
   /** Everything on this day. Free time is drawn softly behind the bookings. */
   events: CalendarEvent[];
   onChangeDay: (delta: number) => void;
-  onToday: () => void;
   onEventPress: (e: CalendarEvent) => void;
-  /** Freelancers: long-press empty time to add availability there (minutes after midnight, on a 15-min grid). */
-  onLongPressTime?: (minutes: number) => void;
+  /**
+   * Freelancers: press and hold on the day, then drag up/down to mark a time range (on a 15-min grid);
+   * letting go calls this with the range in minutes after midnight. Holding without dragging marks 1 hour.
+   */
+  onSelectRange?: (startMinutes: number, endMinutes: number) => void;
+  /** True while a range is being dragged (the page shouldn't scroll meanwhile). */
+  onSelecting?: (selecting: boolean) => void;
+  /** False when the screen shows <DayHeader> itself, fixed at the top of the page. */
+  showHeader?: boolean;
 };
 
+/** The day's date with ← → for the previous/next day. Screens keep it fixed at the top in the day view. */
+export function DayHeader({ dateKey, onChangeDay }: { dateKey: string; onChangeDay: (delta: number) => void }) {
+  return (
+    <View style={styles.header}>
+      <TouchableOpacity onPress={() => onChangeDay(-1)} hitSlop={10} accessibilityLabel="Previous day">
+        <Ionicons name="chevron-back" size={22} color={colors.ink} />
+      </TouchableOpacity>
+      <Text style={styles.title}>{dayTitle(dateKey)}</Text>
+      <TouchableOpacity onPress={() => onChangeDay(1)} hitSlop={10} accessibilityLabel="Next day">
+        <Ionicons name="chevron-forward" size={22} color={colors.ink} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const DAY_END = 24 * 60;
+const hhmm = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+
 /** One day, hour by hour, like Apple Calendar's day view. Swipe sideways for the next/previous day. */
-export default function DayTimeline({ dateKey, todayKey, events, onChangeDay, onToday, onEventPress, onLongPressTime }: Props) {
+export default function DayTimeline({ dateKey, todayKey, events, onChangeDay, onEventPress, onSelectRange, onSelecting, showHeader = true }: Props) {
   const free = events.filter((e) => e.kind === 'available');
   const bookings = layoutColumns(events.filter((e) => e.kind !== 'available'));
   const now = new Date();
@@ -71,46 +96,57 @@ export default function DayTimeline({ dateKey, todayKey, events, onChangeDay, on
       else if (e.translationX > 60) onChangeDay(-1);
     });
 
+  // ---- Press, hold and drag to mark a time range (e.g. 10:00–13:00) ----
+  const [range, setRange] = useState<{ start: number; end: number } | null>(null);
+  const rangeRef = useRef<{ start: number; end: number } | null>(null);
+  const anchor = useRef(0);
+  const showRange = (r: { start: number; end: number } | null) => { rangeRef.current = r; setRange(r); };
+  const quarterAt = (y: number) => Math.min(DAY_END - 15, Math.max(0, Math.floor((y / HOUR_HEIGHT) * 4) * 15));
+  const select = Gesture.Pan()
+    .runOnJS(true)
+    .enabled(!!onSelectRange)
+    .activateAfterLongPress(300)
+    .onStart((e) => {
+      anchor.current = quarterAt(e.y);
+      showRange({ start: anchor.current, end: Math.min(DAY_END, anchor.current + 60) }); // just holding = 1 hour
+      onSelecting?.(true);
+    })
+    .onUpdate((e) => {
+      if (Math.abs(e.translationY) < 8) return; // still holding: keep the 1 hour
+      const at = quarterAt(e.y);
+      showRange(at >= anchor.current
+        ? { start: anchor.current, end: Math.min(DAY_END, at + 15) }   // dragged down
+        : { start: at, end: anchor.current + 15 });                     // dragged up
+    })
+    .onEnd(() => {
+      const r = rangeRef.current;
+      if (r && onSelectRange) onSelectRange(r.start, Math.min(r.end, DAY_END - 1));
+    })
+    .onFinalize(() => {
+      showRange(null);
+      onSelecting?.(false);
+    });
+  // Holding still marks a range; a quick sideways swipe changes the day. Whichever starts first wins.
+  const gestures = Gesture.Race(swipe, select);
+
   const top = (t: string) => (toMin(t) / 60) * HOUR_HEIGHT;
   const height = (e: CalendarEvent) => Math.max(18, ((toMin(e.end) - toMin(e.start)) / 60) * HOUR_HEIGHT - 2);
 
   return (
     <View>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => onChangeDay(-1)} hitSlop={10} accessibilityLabel="Previous day">
-          <Ionicons name="chevron-back" size={22} color={colors.ink} />
-        </TouchableOpacity>
-        <View style={{ alignItems: 'center' }}>
-          <Text style={styles.title}>{dayTitle(dateKey)}</Text>
-          {dateKey !== todayKey && (
-            <TouchableOpacity onPress={onToday} hitSlop={8}>
-              <Text style={styles.todayLink}>Today</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <TouchableOpacity onPress={() => onChangeDay(1)} hitSlop={10} accessibilityLabel="Next day">
-          <Ionicons name="chevron-forward" size={22} color={colors.ink} />
-        </TouchableOpacity>
-      </View>
-      {onLongPressTime && <Text style={styles.hint}>Press and hold an empty time to add availability.</Text>}
+      {showHeader && <DayHeader dateKey={dateKey} onChangeDay={onChangeDay} />}
 
-      <GestureDetector gesture={swipe}>
+      <GestureDetector gesture={gestures}>
         <View style={{ height: 24 * HOUR_HEIGHT, marginTop: 8 }}>
-          {/* Hour lines and labels; long-press here (not on a booking) to add availability */}
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            delayLongPress={400}
-            onLongPress={onLongPressTime
-              ? (e) => onLongPressTime(Math.min(23 * 60 + 45, Math.floor((e.nativeEvent.locationY / HOUR_HEIGHT) * 4) * 15))
-              : undefined}
-          >
+          {/* Hour lines and labels */}
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
             {HOURS.map((h) => (
               <View key={h} style={[styles.hourRow, { top: h * HOUR_HEIGHT }]}>
                 <Text style={styles.hourText}>{pad(h)}:00</Text>
                 <View style={styles.hourLine} />
               </View>
             ))}
-          </Pressable>
+          </View>
 
           {/* Free time, behind the bookings */}
           {free.map((e) => (
@@ -149,6 +185,16 @@ export default function DayTimeline({ dateKey, todayKey, events, onChangeDay, on
             ))}
           </View>
 
+          {/* The range being marked (press, hold and drag) */}
+          {range && (
+            <View pointerEvents="none" style={[styles.range, {
+              top: (range.start / 60) * HOUR_HEIGHT,
+              height: ((range.end - range.start) / 60) * HOUR_HEIGHT,
+            }]}>
+              <Text style={styles.rangeText}>{hhmm(range.start)}–{hhmm(Math.min(range.end, DAY_END - 1))}</Text>
+            </View>
+          )}
+
           {/* Now */}
           {dateKey === todayKey && (
             <View pointerEvents="none" style={[styles.nowLine, { top: (nowMinutes / 60) * HOUR_HEIGHT }]}>
@@ -164,8 +210,8 @@ export default function DayTimeline({ dateKey, todayKey, events, onChangeDay, on
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingVertical: 12 },
   title: { fontSize: 16, color: colors.ink, fontFamily: fonts.title, textAlign: 'center' },
-  todayLink: { fontSize: 13, color: colors.wine, fontWeight: '700', marginTop: 2 },
-  hint: { fontSize: 12, color: colors.inkMuted, textAlign: 'center', marginTop: -4 },
+  range: { position: 'absolute', left: GUTTER + 2, right: 14, borderRadius: 6, backgroundColor: 'rgba(250,137,171,0.45)', borderWidth: 2, borderColor: colors.wine, paddingHorizontal: 6, paddingTop: 2 },
+  rangeText: { fontSize: 12, fontWeight: '700', color: colors.wine },
   hourRow: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', alignItems: 'flex-start' },
   hourText: { width: GUTTER, fontSize: 11, color: colors.inkMuted, textAlign: 'right', paddingRight: 8, marginTop: -7 },
   hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginRight: 12 },

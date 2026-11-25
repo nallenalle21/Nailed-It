@@ -11,10 +11,10 @@ import { colors, fonts } from '../../theme';
 import React, { useCallback, useRef, useState } from 'react';
 import {
   BackHandler,
+  type GestureResponderEvent,
   ActivityIndicator,
   Alert,
   Image,
-  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -29,6 +29,9 @@ import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
 import BookingModal from '../../components/BookingModal';
+import { useIsFreelancer } from '../../services/myRole';
+import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
+import type { BookableCreator, FreeTime } from '../../services/findBooking';
 import { bookedMessage } from '../../services/booking';
 import ReviewsCertificatesBox from '../../components/ReviewsCertificatesBox';
 import { vendorCity } from '../../data/vendorCities';
@@ -89,6 +92,8 @@ const theme = {
 
 export default function VendorProfile({ navigation, route }: any) {
   const vendorId: string | undefined = route?.params?.vendorId;
+  // Freelancers looking at another nail tech: no booking (Book button, free times in photos).
+  const isFreelancer = useIsFreelancer();
   // The tab this profile was opened from (Explore, Wishlist, Calendar): Back returns there,
   // e.g. to the photo that was open. Without it, a plain "go back".
   const from: string | undefined = route?.params?.from;
@@ -96,6 +101,26 @@ export default function VendorProfile({ navigation, route }: any) {
     if (from) navigation.navigate(from);
     else navigation.goBack();
   }, [from, navigation]);
+  // A portfolio photo opened in the same photo view as the Explore feed (null = none open).
+  const [sheetPostId, setSheetPostId] = useState<string | null>(null);
+  const [bookingPreset, setBookingPreset] = useState<{ date: string | null; start: string | null; serviceIds: string[] | null } | null>(null);
+
+  // Swipe sideways anywhere on the profile to go back (same as the arrow): a quick, clearly
+  // sideways swipe. We only watch the finger, so scrolling and taps work as usual.
+  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  const onSwipeTouchStart = (e: GestureResponderEvent) => {
+    const { pageX, pageY, touches } = e.nativeEvent;
+    swipeStart.current = touches.length > 1 ? null : { x: pageX, y: pageY, t: Date.now() };
+  };
+  const onSwipeTouchEnd = (e: GestureResponderEvent) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start || sheetPostId) return; // with a photo open, sideways swipes go through the photos
+    const dx = e.nativeEvent.pageX - start.x;
+    const dy = e.nativeEvent.pageY - start.y;
+    if (Math.abs(dx) >= 70 && Math.abs(dx) >= Math.abs(dy) * 2 && Date.now() - start.t < 600) goBack();
+  };
+
   // Android's back button does the same while this profile is shown.
   useFocusEffect(useCallback(() => {
     if (!from) return;
@@ -112,7 +137,6 @@ export default function VendorProfile({ navigation, route }: any) {
   const [errors, setErrors] = useState<string[]>([]);
   const [savePostId, setSavePostId] = useState<string | null>(null);
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
-  const [expandedPost, setExpandedPost] = useState<PostPreview | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // Pull-to-refresh reloads quietly (keeps the profile on screen) and shows the spinning star.
   const quietReload = useRef(false);
@@ -206,7 +230,7 @@ export default function VendorProfile({ navigation, route }: any) {
   const publicTiles: PostPreview[] = [
     ...posts.map(post => ({
       id: post.id,
-      caption: post.caption || 'Portfolio photo',
+      caption: post.caption?.trim() || '', // no stand-in text: a photo without a caption shows none
       color: theme.accentSoft,
       pinned: post.is_pinned,
       uri: publicPostUrl(post.storage_path),
@@ -227,6 +251,16 @@ export default function VendorProfile({ navigation, route }: any) {
     .map((w) => (w === 'mobile' && vendor?.travel_km ? `${WORKPLACE_SHORT[w]} within ${vendor.travel_km} km` : WORKPLACE_SHORT[w]))
     .join(' · ');
   const initial = displayName.slice(0, 1).toUpperCase();
+
+  // ---- The Explore photo view for this portfolio (real photos only, in the grid's order) ----
+  const sheetPhotos: SheetPhoto[] = publicTiles
+    .filter(t => t.uri)
+    .map(t => ({ id: t.id, uri: t.uri!, caption: t.caption, vendorId: vendorId ?? '', creatorName: displayName }));
+  /** A free time pre-chooses its service; "All times" leaves the service open (same as Explore). */
+  const bookFromPhoto = (c: BookableCreator, time: FreeTime | null) => {
+    setBookingPreset({ date: time?.date ?? null, start: time?.start ?? null, serviceIds: time ? [c.serviceId] : null });
+    setBookingOpen(true);
+  };
 
   const handleContactVendor = async () => {
     if (!vendorId) return;
@@ -249,7 +283,13 @@ export default function VendorProfile({ navigation, route }: any) {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView
+      style={styles.container}
+      edges={['top', 'left', 'right']}
+      onTouchStart={onSwipeTouchStart}
+      onTouchEnd={onSwipeTouchEnd}
+      onTouchCancel={() => { swipeStart.current = null; }}
+    >
       <View style={styles.toolbar}>
         <TouchableOpacity
           accessibilityRole="button"
@@ -333,13 +373,15 @@ export default function VendorProfile({ navigation, route }: any) {
             </View>
           )}
 
-          {/* Booking right under the profile, then the portfolio */}
+          {/* Booking right under the profile, then the portfolio (customers only: freelancers don't book) */}
+          {!isFreelancer && (
           <View style={styles.bookingPanel}>
             <TouchableOpacity accessibilityRole="button" onPress={() => setBookingOpen(true)} style={styles.bookButton}>
               <Text style={styles.bookButtonText}>Book</Text>
               <Ionicons name="arrow-forward" size={18} color={theme.white} />
             </TouchableOpacity>
           </View>
+          )}
 
           <View style={styles.portfolioHeading}>
             <Text style={styles.sectionHeading}>Portfolio</Text>
@@ -350,7 +392,7 @@ export default function VendorProfile({ navigation, route }: any) {
                 key={post.id}
                 accessibilityRole="button"
                 accessibilityLabel={`Open ${post.uri ? "portfolio photo" : "placeholder"}: ${post.caption}`}
-                onPress={() => setExpandedPost(post)}
+                onPress={() => { if (post.uri) setSheetPostId(post.id); }}
                 onLongPress={() => { if (post.uri) setSavePostId(post.id); }}
                 style={[styles.portfolioTile, { backgroundColor: post.color }]}
               >
@@ -383,34 +425,6 @@ export default function VendorProfile({ navigation, route }: any) {
       {/* Spinning star while pulling to refresh (same as Explore); sits just under the toolbar */}
       <RefreshStar refreshing={pulling} y={150} />
 
-      <Modal
-        visible={expandedPost !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setExpandedPost(null)}
-      >
-        <View style={styles.modalShade}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalTop}>
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel="Close image preview"
-                onPress={() => setExpandedPost(null)}
-              >
-                <Ionicons name="close" size={25} color={theme.ink} />
-              </TouchableOpacity>
-            </View>
-            <View style={[styles.modalImage, { backgroundColor: expandedPost?.color ?? theme.accentSoft }]}>
-              {expandedPost?.uri ? (
-                <Image source={{ uri: expandedPost.uri }} style={styles.modalPhoto} resizeMode="contain" />
-              ) : (
-                <Ionicons name="image-outline" size={68} color="#775666" />
-              )}
-            </View>
-            <Text style={styles.modalCaption}>{handle(displayName)}</Text>
-          </View>
-        </View>
-      </Modal>
       {vendor && (
         <TouchableOpacity
           accessibilityRole="button"
@@ -424,9 +438,14 @@ export default function VendorProfile({ navigation, route }: any) {
       <BookingModal
         visible={bookingOpen && !!vendorId}
         creator={vendorId ? { id: vendorId, name: displayName } : null}
-        onClose={() => setBookingOpen(false)}
+        initialDate={bookingPreset?.date ?? null}
+        initialStart={bookingPreset?.start}
+        initialServiceIds={bookingPreset?.serviceIds}
+        onClose={() => { setBookingOpen(false); setBookingPreset(null); }}
         onBooked={(a) => {
           setBookingOpen(false);
+          setBookingPreset(null);
+          setSheetPostId(null);
           const msg = bookedMessage(a);
           Alert.alert(msg.title, msg.body);
         }}
@@ -437,6 +456,16 @@ export default function VendorProfile({ navigation, route }: any) {
         targetId={savePostId}
         onClose={() => setSavePostId(null)}
         onChanged={() => void refreshSavedPhotos()}
+      />
+      {/* Same as the Explore feed: like, pinch to zoom, swipe through the portfolio, pull down or tap outside to close */}
+      <PhotoBookSheet
+        photos={sheetPhotos}
+        openId={sheetPostId}
+        savedIds={savedPostIds}
+        onSavedChanged={() => void refreshSavedPhotos()}
+        onClose={() => setSheetPostId(null)}
+        onBook={isFreelancer ? undefined : bookFromPhoto}
+        onOpenProfile={() => setSheetPostId(null)} // already on their profile
       />
     </SafeAreaView>
   );

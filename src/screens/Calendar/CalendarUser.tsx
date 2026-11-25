@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   RefreshControl,
-  Image,
   Alert,
   ActivityIndicator,
 } from 'react-native';
@@ -20,14 +19,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { bookedMessage, canCancel, cancelAppointment, fetchMyAppointments, formatKr, isRequestExpired, type Appointment } from '../../services/booking';
 import BookingModal from '../../components/BookingModal';
 import BookingDetailsModal from '../../components/BookingDetailsModal';
+import BookingActivity from '../../components/BookingActivity';
+import { FLOW_DAYS } from '../../services/bookingRequests';
 import ReasonDialog from '../../components/ReasonDialog';
 import { syncBookingReminders } from '../../services/reminders';
 import MonthGrid from '../../components/calendar/MonthGrid';
 import DayTimeline, { HOUR_HEIGHT } from '../../components/calendar/DayTimeline';
+import { WeekHeader } from '../../components/calendar/WeekTimeline';
 import ViewMenu from '../../components/calendar/ViewMenu';
 import { MONTH_VIEWS, eventsByDate, useCalendarView, type CalendarEvent } from '../../components/calendar/types';
 
-const STAR = require('../../../assets/images/star.png');
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -36,10 +37,6 @@ const MONTHS = [
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const dateKey = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
-const shortLabel = (key: string) => {
-  const [, m, d] = key.split('-');
-  return `${Number(d)} ${MONTHS[Number(m) - 1].slice(0, 3)}`;
-};
 const longLabel = (key: string) => {
   const [, m, d] = key.split('-');
   return `${Number(d)} ${MONTHS[Number(m) - 1]}`;
@@ -69,6 +66,8 @@ export default function CalendarUser() {
   const [month, setMonth] = useState(today.getMonth());
   const [selected, setSelected] = useState(todayKey);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  // Everything (also past and cancelled), for Booking activity.
+  const [allRows, setAllRows] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -97,6 +96,7 @@ export default function CalendarUser() {
     fetchMyAppointments('customer', ['confirmed', 'pending', 'declined', 'expired', 'cancelled'])
       .then((rows) => {
         if (!active) return;
+        setAllRows(rows);
         setAppointments(rows.filter((a) => a.status === 'confirmed' || a.status === 'pending' || a.appointment_date >= todayKey));
         setLoadError('');
       })
@@ -132,6 +132,28 @@ export default function CalendarUser() {
   }));
   const byDate = eventsByDate(events);
 
+  // ---- Booking activity (same as the nail tech's, from the customer's side) ----
+  // Requests still waiting, plus everything booked in the last FLOW_DAYS days; newest first.
+  const since = Date.now() - FLOW_DAYS * 24 * 60 * 60 * 1000;
+  const activity = allRows
+    .filter((a) => (a.status === 'pending' && !isRequestExpired(a)) || (a.created_at && new Date(a.created_at).getTime() >= since))
+    .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+  const cancelBooking = async (a: Appointment, reason: string) => {
+    setCancelBusyId(a.id);
+    try {
+      await cancelAppointment(a.id, reason);
+      void syncBookingReminders(); // drop its 36 h / 2 h reminders
+    } catch (e: any) {
+      Alert.alert('Could not cancel', e instanceof Error ? e.message : String(e?.message ?? e));
+    } finally {
+      setCancelBusyId(null);
+      setReloadKey((n) => n + 1);
+    }
+  };
+  const openChat = (a: Appointment) => {
+    navigation.navigate('ChatRoom', { chatId: [a.customer_id, a.creator_id].sort().join('_'), customerName: a.creator_name, role: 'user' });
+  };
+
   const changeMonth = (delta: number) => {
     const d = new Date(year, month + delta, 1);
     setYear(d.getFullYear());
@@ -151,6 +173,12 @@ export default function CalendarUser() {
     selectDay(dateKey(next.getFullYear(), next.getMonth(), next.getDate()));
   };
   // Pinch on the month: Compact ↔ Stacked ↔ Details.
+  // Choosing a view: Compact, Stacked and Details start at the top of the page
+  // (the week view scrolls to the hours by itself).
+  const chooseView = (next: typeof view) => {
+    setView(next);
+    if (next !== 'week') scrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
   const pinchView = (direction: 1 | -1) => {
     const i = MONTH_VIEWS.indexOf(view);
     const next = MONTH_VIEWS[Math.min(MONTH_VIEWS.length - 1, Math.max(0, i + direction))];
@@ -160,31 +188,38 @@ export default function CalendarUser() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.headerSide} />
+        {/* Week view: ← back to the month (Details) */}
+        <View style={styles.headerSide}>
+          {view === 'week' && (
+            // Not a chevron (those step through days): a "Month" button with a grid icon
+            <TouchableOpacity style={styles.monthButton} onPress={() => chooseView('details')} hitSlop={8} accessibilityLabel="Back to month">
+              <Ionicons name="arrow-back" size={16} color={colors.wine} />
+              <Ionicons name="grid-outline" size={15} color={colors.wine} />
+            </TouchableOpacity>
+          )}
+        </View>
         <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
         <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-          <ViewMenu view={view} onChange={setView} />
+          <ViewMenu view={view} onChange={chooseView} />
         </View>
       </View>
 
+      {/* Week view: the week's days + the chosen day's date stay at the top; that one day, large, below */}
+      {view === 'week' && (
+        <WeekHeader dateKey={selected} todayKey={todayKey} onChangeDay={changeDay} onSelectDay={selectDay} />
+      )}
+
       <ScrollView ref={scrollRef} refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Next Up */}
-        <View style={styles.nextUp}>
-          <Text style={styles.nextUpLabel}>Next Booking</Text>
-          {/* Row 1: date + time. Row 2 (smaller): service · nail tech */}
-          <View style={styles.nextUpRow}>
-            <Text style={styles.nextUpText}>
-              {nextUp ? `${shortLabel(nextUp.appointment_date)} ${hhmm(nextUp.start_time)}–${hhmm(nextUp.end_time)}` : 'No upcoming bookings'}
-            </Text>
-            {nextUp && <Image source={STAR} style={styles.nextUpStar} />}
-          </View>
-          {nextUp && (
-            <Text style={styles.nextUpDetail}>
-              {nextUp.services.map((s) => s.name).join(', ')} · {handle(nextUp.creator_name)}
-              {nextUp.status === 'pending' ? ' · waiting for approval' : ''}
-            </Text>
-          )}
-        </View>
+        {/* Booking activity: your requests, bookings, declines and cancellations ("See all") */}
+        <BookingActivity
+          perspective="customer"
+          items={activity}
+          loading={loading}
+          busyId={cancelBusyId}
+          onCancel={cancelBooking}
+          onChat={openChat}
+          onView={setViewing}
+        />
 
         {/* Book again: your latest booking with each nail tech */}
         {bookAgain.length > 0 && (
@@ -205,15 +240,15 @@ export default function CalendarUser() {
           </View>
         )}
 
-        {view === 'day' ? (
+        {view === 'week' ? (
           // Opens scrolled to the morning.
           <View onLayout={(e) => scrollRef.current?.scrollTo({ y: e.nativeEvent.layout.y + 7.5 * HOUR_HEIGHT, animated: false })}>
             <DayTimeline
+              showHeader={false}
               dateKey={selected}
               todayKey={todayKey}
               events={byDate[selected] ?? []}
               onChangeDay={changeDay}
-              onToday={() => selectDay(todayKey)}
               onEventPress={(e) => setViewing(appointments.find((a) => a.id === e.id) ?? null)}
             />
           </View>
@@ -225,7 +260,9 @@ export default function CalendarUser() {
             onChangeMonth={changeMonth}
             todayKey={todayKey}
             selected={selected}
-            onSelectDay={setSelected}
+            // Tap a day: open it in the day view
+            // First tap: choose the day (same view). Tap the chosen day again: its week, hour by hour.
+            onSelectDay={(key) => { if (key === selected) chooseView('week'); else selectDay(key); }}
             events={byDate}
             starDate={nextUp?.appointment_date}
             onPinch={pinchView}
@@ -233,7 +270,7 @@ export default function CalendarUser() {
         )}
 
         {/* Bookings for selected day */}
-        {view !== 'day' && <>
+        {view !== 'week' && <>
         <View style={styles.slotsHeader}>
           <Text style={styles.slotsTitle}>my bookings<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
         </View>
@@ -292,19 +329,10 @@ export default function CalendarUser() {
           confirmLabel={cancelling.status === 'pending' ? 'Withdraw' : 'Cancel booking'}
           placeholder="Message to your nail tech (optional)"
           onClose={() => setCancelling(null)}
-          onConfirm={async (reason) => {
+          onConfirm={(reason) => {
             const a = cancelling;
             setCancelling(null);
-            setCancelBusyId(a.id);
-            try {
-              await cancelAppointment(a.id, reason);
-              void syncBookingReminders(); // drop its 36 h / 2 h reminders
-            } catch (e: any) {
-              Alert.alert('Could not cancel', e instanceof Error ? e.message : String(e?.message ?? e));
-            } finally {
-              setCancelBusyId(null);
-              setReloadKey((n) => n + 1);
-            }
+            void cancelBooking(a, reason);
           }}
         />
       )}
@@ -331,6 +359,7 @@ export default function CalendarUser() {
 }
 
 const styles = StyleSheet.create({
+  monthButton: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.pinkTint },
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
@@ -341,19 +370,6 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20 },
   headerSide: { flex: 1 },
-  nextUp: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 20,
-    padding: 18,
-    borderRadius: 14,
-    backgroundColor: colors.blue,
-  },
-  nextUpLabel: { fontSize: 12, fontFamily: fonts.title, color: colors.blueDeep, textTransform: 'uppercase' },
-  nextUpText: { fontSize: 24, fontWeight: '700', marginTop: 6, color: colors.background },
-  nextUpRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  nextUpStar: { width: 18, height: 18, alignSelf: 'flex-start', marginTop: -2, marginLeft: -5 }, // up and to the right of the date/time
-  nextUpDetail: { fontSize: 15, marginTop: 4, color: colors.background }, // service · person
   slotsHeader: {
     paddingHorizontal: 16,
     paddingTop: 16,

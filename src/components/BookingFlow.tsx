@@ -2,13 +2,12 @@ import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
-import { colors, fonts } from '../theme';
+import { colors } from '../theme';
 import { handle } from '../utils/handle';
 import { canCancel, formatKr, isRequestExpired, type Appointment } from '../services/booking';
 import { FLOW_DAYS } from '../services/bookingRequests';
 import ReasonDialog from './ReasonDialog';
-
-const RECENT_SHOWN = 5; // more behind "Show all"
+import SwipeToArchive from './SwipeToArchive';
 
 const dateLabel = (key: string) => {
   const [y, m, d] = key.split('-').map(Number);
@@ -44,46 +43,74 @@ type Props = {
   loading: boolean;
   /** Booking being accepted/declined/cancelled right now. */
   busyId: string | null;
-  onAccept: (a: Appointment) => void;
-  onDecline: (a: Appointment, reason: string) => void;
+  /** Whose activity this is: the nail tech's (answers requests) or the customer's. */
+  perspective?: 'creator' | 'customer';
+  /** Nail tech only: answer a request. */
+  onAccept?: (a: Appointment) => void;
+  onDecline?: (a: Appointment, reason: string) => void;
   onCancel: (a: Appointment, reason: string) => void;
   onChat: (a: Appointment) => void;
+  /** Tap a row to see the booking (customers: the booking card). */
+  onView?: (a: Appointment) => void;
+  /** Not seen yet: gets a pink dot. */
+  isUnread: (a: Appointment) => boolean;
+  /** Which list: what's going on now, or what has been archived. */
+  tab: 'active' | 'archived';
+  /** Happenings the freelancer archived (kept on this phone). */
+  archivedIds: Set<string>;
+  onArchive: (ids: string[]) => void;
+  onUnarchive: (id: string) => void;
 };
 
+/** Requests still waiting for an answer: these can't be archived (answer them first). */
+export function openRequests(items: Appointment[], now = new Date()) {
+  return items.filter((a) => a.status === 'pending' && !isRequestExpired(a, now));
+}
+
 /**
- * The freelancer's booking flow in the Calendar: requests waiting for an answer on top
- * (Accept / Chat / Decline), then bookings from the last days, newest first. A dot marks
- * bookings they haven't seen yet.
+ * The freelancer's booking activity (shown in the "Booking activity" pop-up in the Calendar):
+ * requests waiting for an answer on top (Accept / Chat / Decline), then bookings, cancellations
+ * and answers from the last days, newest first. A dot marks ones they haven't seen yet.
+ * Each happening can be archived to clean up the list; the Archived tab shows them again.
  */
-export default function BookingFlow({ items, loading, busyId, onAccept, onDecline, onCancel, onChat }: Props) {
-  const [showAll, setShowAll] = useState(false);
+export default function BookingFlow({ items, loading, busyId, perspective = 'creator', onAccept, onDecline, onCancel, onChat, onView, isUnread, tab, archivedIds, onArchive, onUnarchive }: Props) {
+  const isCreator = perspective === 'creator';
   // The decline/cancel dialog: which booking, and which of the two.
   const [asking, setAsking] = useState<{ a: Appointment; kind: 'decline' | 'cancel' } | null>(null);
   const now = new Date();
 
-  const requests = items.filter((a) => a.status === 'pending' && !isRequestExpired(a, now));
-  const recent = items.filter((a) => !requests.includes(a));
-  const shownRecent = showAll ? recent : recent.slice(0, RECENT_SHOWN);
+  // Everything can be archived (like email). Archived requests still need an answer, so
+  // they keep their buttons in the Archived tab.
+  const inThisTab = (a: Appointment) => (tab === 'archived') === archivedIds.has(a.id);
+  // Nail techs answer requests in their own cards on top; customers see their requests as rows.
+  const open = isCreator ? openRequests(items, now) : [];
+  const requests = open.filter(inThisTab);
+  const recent = items.filter((a) => !open.includes(a) && inThisTab(a));
+  const swipe = (a: Appointment) => (tab === 'active' ? onArchive([a.id]) : onUnarchive(a.id));
+  const swipeLabel = tab === 'active' ? 'Archive' : 'Unarchive';
+  const swipeIcon = tab === 'active' ? 'archive-outline' as const : 'arrow-undo-outline' as const;
 
   return (
     <View style={styles.section}>
-      <View style={styles.titleRow}>
-        <Text style={styles.title}>Booking flow</Text>
-        {requests.length > 0 && (
-          <View style={styles.countBadge}>
-            <Text style={styles.countText}>{requests.length} {requests.length === 1 ? 'request' : 'requests'}</Text>
-          </View>
-        )}
-      </View>
+      {/* Clean up: archive everything that doesn't need an answer */}
+      {tab === 'active' && recent.length > 1 && (
+        <TouchableOpacity style={styles.archiveAll} onPress={() => onArchive(recent.map((a) => a.id))} hitSlop={8}>
+          <Ionicons name="archive-outline" size={16} color={colors.wine} />
+          <Text style={styles.archiveAllText}>Archive all</Text>
+        </TouchableOpacity>
+      )}
 
       {loading && items.length === 0 ? (
         <ActivityIndicator color={colors.wine} style={{ marginVertical: 12 }} />
-      ) : items.length === 0 ? (
-        <Text style={styles.empty}>No new bookings in the last {FLOW_DAYS} days.</Text>
+      ) : requests.length + recent.length === 0 ? (
+        <Text style={styles.empty}>
+          {tab === 'archived' ? 'Nothing archived yet.' : `No booking activity in the last ${FLOW_DAYS} days.`}
+        </Text>
       ) : null}
 
       {requests.map((a) => (
-        <View key={a.id} style={styles.request}>
+        <SwipeToArchive key={a.id} onSwiped={() => swipe(a)} label={swipeLabel} icon={swipeIcon} enabled={busyId !== a.id}>
+        <View style={styles.request}>
           <View style={styles.requestTop}>
             <Text style={styles.name} numberOfLines={1}>{handle(a.customer_name)}</Text>
             <Text style={styles.deadline}>{answerWithin(a.expires_at, now)}</Text>
@@ -104,33 +131,45 @@ export default function BookingFlow({ items, loading, busyId, onAccept, onDeclin
               <TouchableOpacity style={[styles.button, styles.chat]} onPress={() => onChat(a)} accessibilityLabel={`Chat with ${handle(a.customer_name)}`}>
                 <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.wine} />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, styles.primary]} onPress={() => onAccept(a)}>
+              <TouchableOpacity style={[styles.button, styles.primary]} onPress={() => onAccept?.(a)}>
                 <Text style={styles.primaryText}>Accept</Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
+        </SwipeToArchive>
       ))}
 
-      {shownRecent.map((a) => {
-        const label = STATUS_LABEL[isRequestExpired(a, now) ? 'expired' : a.status];
-        const cancellable = a.status === 'confirmed' && canCancel(a, now);
+      {recent.map((a) => {
+        const expired = isRequestExpired(a, now);
+        const label = !isCreator && a.status === 'pending' && !expired
+          ? { text: 'Waiting', color: colors.blue }
+          : STATUS_LABEL[expired ? 'expired' : a.status];
+        // Nail techs cancel bookings; customers can also withdraw a request that's waiting.
+        const cancellable = isCreator ? a.status === 'confirmed' && canCancel(a, now) : canCancel(a, now);
+        const other = isCreator ? a.customer_name : a.creator_name;
+        const me = isCreator ? a.creator_id : a.customer_id;
         return (
-          <View key={a.id} style={styles.row}>
-            <View style={[styles.dot, !a.seen_by_creator_at && styles.dotNew]} />
+          // Swipe right: archive (in Archived: move it back)
+          <SwipeToArchive key={a.id} onSwiped={() => swipe(a)} label={swipeLabel} icon={swipeIcon} enabled={busyId !== a.id}>
+          <TouchableOpacity style={styles.row} activeOpacity={onView ? 0.7 : 1} disabled={!onView} onPress={() => onView?.(a)}>
+            <View style={[styles.dot, isUnread(a) && styles.dotNew]} />
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle} numberOfLines={1}>
-                {handle(a.customer_name)} · {a.services.map((s) => s.name).join(', ')}
+                {handle(other)} · {a.services.map((s) => s.name).join(', ')}
               </Text>
               <Text style={styles.meta}>
                 {dateLabel(a.appointment_date)} {hhmm(a.start_time)} · booked {ago(a.created_at, now)}
               </Text>
               {a.status === 'cancelled' && (
                 <Text style={styles.meta}>
-                  {a.cancelled_by === a.creator_id ? 'You cancelled' : 'The customer cancelled'}
+                  {a.cancelled_by === me ? 'You cancelled' : isCreator ? 'The customer cancelled' : 'The nail tech cancelled'}
                   {a.cancel_reason ? `: “${a.cancel_reason}”` : ''}
                 </Text>
               )}
+              {!isCreator && a.status === 'declined' && a.decline_reason ? (
+                <Text style={styles.meta}>“{a.decline_reason}”</Text>
+              ) : null}
             </View>
             {busyId === a.id ? (
               <ActivityIndicator color={colors.wine} />
@@ -139,32 +178,29 @@ export default function BookingFlow({ items, loading, busyId, onAccept, onDeclin
                 <Text style={[styles.status, { color: label.color }]}>{label.text}</Text>
                 {cancellable && (
                   <TouchableOpacity onPress={() => setAsking({ a, kind: 'cancel' })} hitSlop={8}>
-                    <Text style={styles.cancelLink}>Cancel</Text>
+                    <Text style={styles.cancelLink}>{a.status === 'pending' ? 'Withdraw' : 'Cancel'}</Text>
                   </TouchableOpacity>
                 )}
               </View>
             )}
-          </View>
+          </TouchableOpacity>
+          </SwipeToArchive>
         );
       })}
-      {recent.length > RECENT_SHOWN && (
-        <TouchableOpacity onPress={() => setShowAll((v) => !v)} hitSlop={8}>
-          <Text style={styles.more}>{showAll ? 'Show less' : `Show all (${recent.length})`}</Text>
-        </TouchableOpacity>
-      )}
 
       {/* Decline / cancel, with an optional message to the customer */}
       {asking && (
         <ReasonDialog
-          title={asking.kind === 'decline' ? 'Decline request' : 'Cancel booking'}
-          subtitle={`${handle(asking.a.customer_name)} · ${dateLabel(asking.a.appointment_date)} ${hhmm(asking.a.start_time)}`}
-          confirmLabel={asking.kind === 'decline' ? 'Decline' : 'Cancel booking'}
-          placeholder="Message to the customer (optional)"
+          title={asking.kind === 'decline' ? 'Decline request' : asking.a.status === 'pending' ? 'Withdraw request' : 'Cancel booking'}
+          subtitle={`${handle(isCreator ? asking.a.customer_name : asking.a.creator_name)} · ${dateLabel(asking.a.appointment_date)} ${hhmm(asking.a.start_time)}`}
+          confirmLabel={asking.kind === 'decline' ? 'Decline' : asking.a.status === 'pending' ? 'Withdraw' : 'Cancel booking'}
+          placeholder={isCreator ? 'Message to the customer (optional)' : 'Message to your nail tech (optional)'}
           onClose={() => setAsking(null)}
           onConfirm={(reason) => {
             const { a, kind } = asking;
             setAsking(null);
-            (kind === 'decline' ? onDecline : onCancel)(a, reason);
+            if (kind === 'decline') onDecline?.(a, reason);
+            else onCancel(a, reason);
           }}
         />
       )}
@@ -174,12 +210,10 @@ export default function BookingFlow({ items, loading, busyId, onAccept, onDeclin
 
 const styles = StyleSheet.create({
   section: { marginHorizontal: 16, marginBottom: 16 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  title: { fontSize: 13, color: colors.ink, fontFamily: fonts.title },
-  countBadge: { backgroundColor: colors.pink, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  countText: { fontSize: 12, fontWeight: '700', color: colors.wine },
+  archiveAll: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 8 },
+  archiveAllText: { color: colors.wine, fontSize: 14, fontWeight: '700' },
   empty: { color: colors.inkMuted, paddingVertical: 6 },
-  request: { padding: 14, borderRadius: 12, backgroundColor: colors.pinkTint, marginBottom: 10 },
+  request: { padding: 14, borderRadius: 12, backgroundColor: colors.pinkTint },
   requestTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   name: { fontSize: 16, fontWeight: '700', color: colors.ink, flexShrink: 1 },
   deadline: { fontSize: 12, color: colors.wine, fontWeight: '600' },
@@ -193,12 +227,11 @@ const styles = StyleSheet.create({
   chat: { width: 46, borderWidth: 1, borderColor: colors.wine },
   primary: { flex: 1, backgroundColor: colors.pink },
   primaryText: { color: colors.wine, fontSize: 15, fontWeight: '700' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, backgroundColor: colors.background },
   dot: { width: 8, height: 8, borderRadius: 4 },
   dotNew: { backgroundColor: colors.pink },
   rowTitle: { fontSize: 15, fontWeight: '600', color: colors.ink },
   status: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   rowRight: { alignItems: 'flex-end', gap: 6 },
   cancelLink: { fontSize: 13, color: colors.wine, fontWeight: '600', textDecorationLine: 'underline' },
-  more: { color: colors.wine, fontWeight: '700', marginTop: 10 },
 });

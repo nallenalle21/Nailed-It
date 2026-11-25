@@ -6,20 +6,15 @@ import { supabase } from '../../services/supabase';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
 import ExploreSearch from '../../components/ExploreSearch';
-import BookingModal from '../../components/BookingModal';
-import BookView from '../../components/BookView';
 import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
-import { bookedMessage, toDateKey } from '../../services/booking';
+import { fetchCreatorsAvailableOn, toDateKey } from '../../services/booking';
 import {
   BOOK_SORTS,
   FEED_SORTS,
   findBookableCreatorsForServices,
-  freeTimeLabel,
   sortFeedPosts,
   type BookSort,
-  type BookableCreator,
   type FeedSort,
-  type FreeTime,
 } from '../../services/findBooking';
 import PriceRangeSlider from '../../components/PriceRangeSlider';
 import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
@@ -36,13 +31,11 @@ import {
   Pressable,
   StyleSheet,
   Animated,
-  GestureResponderEvent,
   LayoutChangeEvent,
   ViewInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
@@ -54,9 +47,6 @@ const SERVICES = [
   'Manicure',
   'Pedicure',
 ];
-
-// Custom burgundy pin with light pink dot (assets/images/map-pin@2x/@3x.png for sharp screens).
-const MAP_PIN = require('../../../assets/images/map-pin.png');
 
 // PROTOTYPE: every photo counts as matching all service/price/date filters, so choosing a
 // filter never empties the "get inspired" feed (search still applies; map pins still filter).
@@ -73,29 +63,6 @@ const isFullPriceRange = ([lo, hi]: PriceRange) => lo === PRICE_MIN && hi === PR
 const inPriceRange = (price: number, [lo, hi]: PriceRange) =>
   (lo === PRICE_MIN || price >= lo) && (hi === PRICE_MAX || price <= hi);
 const formatPriceRange = ([lo, hi]: PriceRange) => `${lo}–${hi === PRICE_MAX ? `${PRICE_MAX}+` : hi} kr`;
-
-// Swiping between the Explore tabs: how far (pt) and how fast (ms) a swipe has to be.
-const SWIPE_MIN_DISTANCE = 70;
-const SWIPE_MAX_MS = 600;
-
-// Freelancers do not store coordinates yet, so each Book-view pin gets a stable spot near
-// central Stockholm derived from their id (same as the customer Explore). Replace with real
-// work-location coordinates.
-function demoCoordinate(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return {
-    latitude: STOCKHOLM.latitude + (((h % 1000) / 1000) - 0.5) * 0.08,
-    longitude: STOCKHOLM.longitude + ((((h >>> 10) % 1000) / 1000) - 0.5) * 0.1,
-  };
-}
-
-const STOCKHOLM = {
-  latitude: 59.3293,
-  longitude: 18.0686,
-  latitudeDelta: 0.09,
-  longitudeDelta: 0.09,
-};
 
 // The Explore feed uses the actual posts uploaded to Supabase by creators.
 type InspoItem = {
@@ -169,14 +136,13 @@ export default function ExploreCreator({ navigation }: any) {
   const [feedWarning, setFeedWarning] = useState<string | null>(null);
   const [feedRefresh, setFeedRefresh] = useState(0);
   // Explore shows either the inspiration feed or the "Book" view; remembered on this phone.
-  const [mode, setMode] = useState<'inspire' | 'book'>('inspire');
+  // Freelancers only have the Feed in Explore (no booking): no Feed/Book tabs.
+  const mode = 'inspire' as 'inspire' | 'book';
   // Book view → booking sheet: who, and the time/service to pre-select.
-  const [booking, setBooking] = useState<{ creator: { id: string; name: string }; date: string | null; start: string | null; serviceIds: string[] | null } | null>(null);
   // Photo tapped in the feed (opens the "Book this look" sheet).
   const [sheetPhoto, setSheetPhoto] = useState<SheetPhoto | null>(null);
   // The open photo stays open while you book or look at the profile, so Back/Cancel returns to it.
   // The signed-in freelancer: their own card is left out of the Book view.
-  const [myId, setMyId] = useState<string | null>(null);
   // Pull-to-refresh shows a spinning star (RefreshStar) until the feed has reloaded.
   const pulled = useRef(false);
   const sawLoading = useRef(false);
@@ -257,9 +223,12 @@ export default function ExploreCreator({ navigation }: any) {
 
     const loadCreatorPosts = async () => {
       try {
+        // Same feed as customers: freelancers who finished their setup, plus always your own photos.
+        const { data: { user: me } } = await supabase.auth.getUser();
         const creatorsResult = await supabase.from('profiles')
           .select('id, username')
-          .eq('role', 'creator');
+          .eq('role', 'creator')
+          .or(me ? `is_live.eq.true,id.eq.${me.id}` : 'is_live.eq.true');
         if (creatorsResult.error) throw creatorsResult.error;
 
         const creators = (creatorsResult.data ?? []) as { id: string; username: string | null }[];
@@ -331,46 +300,9 @@ export default function ExploreCreator({ navigation }: any) {
     });
   }, [navigation]);
 
-  useEffect(() => {
-    let active = true;
-    supabase.auth.getUser().then(({ data }) => { if (active) setMyId(data.user?.id ?? null); }).catch(() => {});
-    return () => { active = false; };
-  }, []);
-  const changeMode = (next: 'inspire' | 'book') => {
-    setMode(next);
-  };
 
-  // Swipe sideways anywhere on Explore to switch between "Feed" and "Book".
-  // We only watch the finger (never take over the touch), so scrolling, the long-press drag,
-  // the map and the photo strips keep working: those block the switch while they're used.
-  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
-  const swipeBlocked = useRef(false);
-  const blockTabSwipe = useCallback(() => { swipeBlocked.current = true; }, []);
-  const onSwipeTouchStart = (e: GestureResponderEvent) => {
-    const { pageX, pageY, touches } = e.nativeEvent;
-    swipeStart.current = touches.length > 1 ? null : { x: pageX, y: pageY, t: Date.now() };
-  };
-  const onSwipeTouchEnd = (e: GestureResponderEvent) => {
-    const start = swipeStart.current;
-    const blocked = swipeBlocked.current;
-    swipeStart.current = null;
-    swipeBlocked.current = false;
-    if (!start || blocked) return;
-    const dx = e.nativeEvent.pageX - start.x;
-    const dy = e.nativeEvent.pageY - start.y;
-    // A quick, clearly sideways swipe (not a scroll or a slow drag).
-    if (Math.abs(dx) < SWIPE_MIN_DISTANCE || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - start.t > SWIPE_MAX_MS) return;
-    changeMode(mode === 'inspire' ? 'book' : 'inspire');
-  };
-
-  /** Book from a card, the map or the photo sheet: a free time (pre-selected) or all times. */
-  const bookCreator = (c: BookableCreator, time: FreeTime | null) => {
-    // A free time is for one service, so pre-choose it; "All times" leaves the service open.
-    setBooking({ creator: { id: c.id, name: c.username }, date: time?.date ?? null, start: time?.start ?? null, serviceIds: time ? [c.serviceId] : null });
-  };
 
   const handleDragStart = useCallback((id: string, x: number, y: number) => {
-    swipeBlocked.current = true; // dragging a photo isn't a tab swipe
     const lx = x - offsetRef.current.x;
     const ly = y - offsetRef.current.y;
     const state = {
@@ -493,6 +425,22 @@ export default function ExploreCreator({ navigation }: any) {
 
   // Split inspo into two columns for the masonry layout
   const dateKey = date ? toDateKey(date) : null;
+  // Date filter (same as customers): freelancers with free time on the chosen date.
+  const availabilityKey = dateKey ? `${dateKey}|${feedRefresh}` : null;
+  const [availability, setAvailability] = useState<{ key: string; ids: Set<string> } | null>(null);
+  const availableIds = availability && availability.key === availabilityKey ? availability.ids : null;
+  useEffect(() => {
+    if (!dateKey || !availabilityKey) return;
+    let active = true;
+    fetchCreatorsAvailableOn(dateKey)
+      .then(ids => active && setAvailability({ key: availabilityKey, ids }))
+      .catch(() => active && setAvailability({ key: availabilityKey, ids: new Set() }));
+    return () => { active = false; };
+  }, [dateKey, availabilityKey]);
+  const datedPosts = useMemo(
+    () => (dateKey && !PROTOTYPE_POSTS_MATCH_ALL_FILTERS ? filteredPosts.filter(p => availableIds?.has(p.vendorId)) : filteredPosts),
+    [filteredPosts, dateKey, availableIds],
+  );
 
   // ---- Feed "Sort by": by the nail tech's from-price or next free time ----
   // From-price: their cheapest service (among the chosen services, if any are filtered).
@@ -524,24 +472,17 @@ export default function ExploreCreator({ navigation }: any) {
   }, [firstFreeKey]); // eslint-disable-line react-hooks/exhaustive-deps -- the key covers date, services and refresh
 
   const sortedPosts = useMemo(() => sortFeedPosts(
-    filteredPosts,
+    datedPosts,
     feedSort,
     vendorFromPrice,
     (vendorId) => (firstFree?.key === firstFreeKey ? firstFree.byVendor.get(vendorId) ?? null : null),
-  ), [filteredPosts, feedSort, vendorFromPrice, firstFree, firstFreeKey]);
+  ), [datedPosts, feedSort, vendorFromPrice, firstFree, firstFreeKey]);
 
   // Split inspo into two columns for the masonry layout (left, right, left, right… in sorted order)
   const colA = sortedPosts.filter((_, i) => i % 2 === 0);
   const colB = sortedPosts.filter((_, i) => i % 2 === 1);
 
-  // The photo sheet's pages: the feed without your own photos (you can't book yourself).
-  const sheetPhotos = useMemo(() => sortedPosts.filter(p => p.vendorId !== myId), [sortedPosts, myId]);
 
-  const photosByCreator = useMemo(() => {
-    const byCreator: Record<string, string[]> = {};
-    for (const post of inspoPosts) (byCreator[post.vendorId] ??= []).push(post.uri);
-    return byCreator;
-  }, [inspoPosts]);
 
   const renderTile = (item: InspoItem) => (
     <InspoTile
@@ -551,7 +492,7 @@ export default function ExploreCreator({ navigation }: any) {
       onStart={handleDragStart}
       onMove={handleDragMove}
       onEnd={handleDragEnd}
-      onTap={() => { if (item.vendorId !== myId) setSheetPhoto(item); }}
+      onTap={() => setSheetPhoto(item)}
     />
   );
 
@@ -563,9 +504,6 @@ export default function ExploreCreator({ navigation }: any) {
         style={{ flex: 1 }}
         collapsable={false}
         onLayout={onOverlayLayout}
-        onTouchStart={onSwipeTouchStart}
-        onTouchEnd={onSwipeTouchEnd}
-        onTouchCancel={() => { swipeStart.current = null; swipeBlocked.current = false; }}
       >
         <ScrollView
           scrollEnabled={scrollEnabled}
@@ -590,7 +528,7 @@ export default function ExploreCreator({ navigation }: any) {
             feedQuery={feedQuery}
             onFeedQueryChange={setFeedQuery}
             onOpenProfile={goToProfile}
-            placeholder="search services"
+            placeholder="search usernames"
             accessory={(
               <TouchableOpacity
                 style={styles.filterButton}
@@ -602,61 +540,7 @@ export default function ExploreCreator({ navigation }: any) {
               </TouchableOpacity>
             )}
           >
-            {/* Inspiration feed or booking: the two ways to use Explore */}
-            <View style={styles.modeToggle}>
-              {(['inspire', 'book'] as const).map((m) => (
-                <TouchableOpacity
-                  key={m}
-                  style={[styles.modeOption, mode === m && styles.modeOptionActive]}
-                  onPress={() => changeMode(m)}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: mode === m }}
-                >
-                  <Ionicons name={m === 'inspire' ? 'sparkles-outline' : 'calendar-outline'} size={16} color={mode === m ? colors.wine : colors.ink} />
-                  <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{m === 'inspire' ? 'Feed' : 'Book'}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {mode === 'book' ? (
-              <>
-                <View style={styles.mapHeader}>
-                  <View style={styles.starTitle}>
-                    <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
-                    <Text style={styles.sectionTitle}>find your services</Text>
-                  </View>
-                </View>
-                <BookView
-                  photosByCreator={photosByCreator}
-                  services={services}
-                  date={date ? toDateKey(date) : null}
-                  matchesPrice={priceRange ? (price) => inPriceRange(price, priceRange) : null}
-                  sort={sort}
-                  refreshKey={feedRefresh}
-                  excludeCreatorId={myId}
-                  onBook={bookCreator}
-                  onOpenProfile={goToProfile}
-                  onSidewaysTouch={blockTabSwipe}
-                  renderMap={(list) => (
-                    <MapView style={styles.map} initialRegion={STOCKHOLM}>
-                      {list.map((c) => (
-                        <Marker
-                          key={c.id}
-                          coordinate={c.areaPoint ?? demoCoordinate(c.id)}
-                          title={c.displayName}
-                          description={c.nextTimes[0] ? `Next free: ${freeTimeLabel(c.nextTimes[0])} · tap to book` : 'No free times soon · tap for profile'}
-                          anchor={{ x: 0.5, y: 1 }}
-                          centerOffset={{ x: 0, y: -18 }}
-                          onCalloutPress={() => (c.nextTimes[0] ? bookCreator(c, c.nextTimes[0]) : goToProfile(c.id))}
-                        >
-                          <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
-                        </Marker>
-                      ))}
-                    </MapView>
-                  )}
-                />
-              </>
-            ) : <>
+            <>
             {/* PART 2: real artwork feed */}
             <View style={styles.feedHeading}>
               <View style={styles.starTitle}>
@@ -689,7 +573,7 @@ export default function ExploreCreator({ navigation }: any) {
                 <View style={styles.feedCol}>{colB.map(renderTile)}</View>
               </View>
             )}
-            </>}
+            </>
           </ExploreSearch>
         </ScrollView>
         <RefreshStar refreshing={pulling} y={40} />
@@ -891,27 +775,12 @@ export default function ExploreCreator({ navigation }: any) {
       </Modal>
 
       <PhotoBookSheet
-        photos={sheetPhotos}
+        photos={sortedPosts}
         openId={sheetPhoto?.id ?? null}
         savedIds={favorites}
         onSavedChanged={() => void reloadFavorites()}
         onClose={() => setSheetPhoto(null)}
-        onBook={bookCreator}
         onOpenProfile={goToProfile}
-      />
-      <BookingModal
-        visible={booking !== null}
-        creator={booking?.creator ?? null}
-        initialDate={booking?.date}
-        initialStart={booking?.start}
-        initialServiceIds={booking?.serviceIds}
-        onClose={() => setBooking(null)}
-        onBooked={(a) => {
-          setSheetPhoto(null); // booked: done with the photo too
-          setBooking(null);
-          setFeedRefresh(n => n + 1);
-          showToast(bookedMessage(a).title);
-        }}
       />
       <SaveToBoardModal
         visible={saveTarget !== null}

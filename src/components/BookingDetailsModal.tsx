@@ -30,6 +30,11 @@ type Props = {
  * "View" on a booking: date, nail tech, services, place and the customer's comment.
  * For a request it also shows where it stands, and lets the customer withdraw it while it waits.
  */
+const todayKeyNow = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export default function BookingDetailsModal({ appointment, onClose, onViewProfile, onChanged }: Props) {
   const [withdrawing, setWithdrawing] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -188,7 +193,8 @@ export default function BookingDetailsModal({ appointment, onClose, onViewProfil
             <TouchableOpacity style={styles.profileButton} onPress={() => onViewProfile(a.creator_id)}>
               <Text style={styles.profileButtonText}>View {name}’s Profile</Text>
             </TouchableOpacity>
-            {a.status === 'confirmed' && (
+            {/* Add to phone calendar: not for days that have passed */}
+            {a.status === 'confirmed' && a.appointment_date >= todayKeyNow() && (
               <TouchableOpacity style={styles.calendarButton} onPress={() => addAppointmentToCalendar(a, 'customer')}>
                 <Ionicons name="calendar-outline" size={18} color={colors.wine} />
                 <Text style={styles.profileButtonText}>Add to Calendar</Text>

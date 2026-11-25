@@ -16,14 +16,13 @@ import {
   BOOK_SORTS,
   FEED_SORTS,
   findBookableCreatorsForServices,
-  freeTimeLabel,
   sortFeedPosts,
   type BookSort,
   type BookableCreator,
   type FeedSort,
   type FreeTime,
 } from '../../services/findBooking';
-import { fetchCreatorsAvailableOn, toDateKey } from '../../services/booking';
+import { fetchCreatorsAvailableOn, formatKr, toDateKey } from '../../services/booking';
 import { getSavedTargetIds } from '../../services/wishlist';
 import {
   View,
@@ -610,7 +609,7 @@ export default function ExploreUser({ navigation }: any) {
             feedQuery={feedQuery}
             onFeedQueryChange={setFeedQuery}
             onOpenProfile={goToProfile}
-            placeholder="search services"
+            placeholder="search usernames"
             accessory={(
               <TouchableOpacity
                 style={styles.filterButton}
@@ -662,11 +661,12 @@ export default function ExploreUser({ navigation }: any) {
                         <Marker
                           key={c.id}
                           coordinate={c.areaPoint ?? demoCoordinate(c.id)}
+                          // Tap a pin: the bubble (name · area · from X kr). Tap the bubble: their profile.
                           title={c.displayName}
-                          description={c.nextTimes[0] ? `Next free: ${freeTimeLabel(c.nextTimes[0])} · tap to book` : 'No free times soon · tap for profile'}
+                          description={[c.city, c.fromPrice !== null ? `from ${formatKr(c.fromPrice)}` : null].filter(Boolean).join(' · ')}
+                          onCalloutPress={() => goToProfile(c.id)}
                           anchor={{ x: 0.5, y: 1 }}
                           centerOffset={{ x: 0, y: -18 }}
-                          onCalloutPress={() => (c.nextTimes[0] ? bookCreator(c, c.nextTimes[0]) : goToProfile(c.id))}
                         >
                           <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
                         </Marker>

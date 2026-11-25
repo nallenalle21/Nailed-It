@@ -14,7 +14,6 @@ import {
   Alert,
   StyleSheet,
   RefreshControl,
-  Image,
   Platform,
   type AlertButton,
 } from 'react-native';
@@ -25,14 +24,15 @@ import { appointmentStart, canCancel, cancelAppointment, fetchMyAppointments, fo
 import { markNoShow } from '../../services/insights';
 import { addAppointmentToCalendar } from '../../services/deviceCalendar';
 import { fetchBookingFlow, markBookingsSeen, respondToRequest } from '../../services/bookingRequests';
-import BookingFlow from '../../components/BookingFlow';
+import BookingActivity from '../../components/BookingActivity';
 import ReasonDialog from '../../components/ReasonDialog';
 import MonthGrid from '../../components/calendar/MonthGrid';
 import DayTimeline, { HOUR_HEIGHT } from '../../components/calendar/DayTimeline';
+import { WeekHeader } from '../../components/calendar/WeekTimeline';
+import TimeWheel from '../../components/calendar/TimeWheel';
 import ViewMenu from '../../components/calendar/ViewMenu';
 import { MONTH_VIEWS, eventsByDate, useCalendarView, type CalendarEvent } from '../../components/calendar/types';
 
-const STAR = require('../../../assets/images/star.png');
 
 type Slot = { id: string; date: string; start: string; end: string; service: string };
 type BookedSlot = Slot & { customer: string };
@@ -59,10 +59,6 @@ const dateKey = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d
 const normalize = (t: string) => {
   const [h, m] = t.split(':');
   return `${pad(Number(h))}:${m}`;
-};
-const shortLabel = (key: string) => {
-  const [, m, d] = key.split('-');
-  return `${Number(d)} ${MONTHS[Number(m) - 1].slice(0, 3)}`;
 };
 const longLabel = (key: string) => {
   const [, m, d] = key.split('-');
@@ -167,11 +163,8 @@ export default function CalendarCreator() {
 
         setAppointments(appointmentRows);
         if (flowRows) {
+          // "New" happenings count as seen once the Booking activity pop-up is opened.
           setFlow(flowRows);
-          // Dots stay on screen for this visit; next time these count as seen.
-          if (flowRows.some((a) => !a.seen_by_creator_at && a.status !== 'pending')) {
-            markBookingsSeen().catch(() => {});
-          }
         }
 
         const rows = (data ?? []) as CreatorSlotRow[];
@@ -257,13 +250,8 @@ export default function CalendarCreator() {
   const answerRequest = async (a: Appointment, accept: boolean, reason?: string) => {
     setBusyRequestId(a.id);
     try {
-      const updated = await respondToRequest(a.id, accept, reason);
-      if (accept) {
-        Alert.alert('Booking accepted', `${handle(a.customer_name)} has been told. Add it to your phone calendar?`, [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Add to calendar', onPress: () => addAppointmentToCalendar(updated, 'creator') },
-        ]);
-      }
+      // Accepted or declined: the customer is told. (Adding to the phone calendar is the small button on the booking.)
+      await respondToRequest(a.id, accept, reason);
     } catch (e) {
       Alert.alert(accept ? 'Could not accept' : 'Could not decline', getErrorMessage(e, 'Please try again.'));
     } finally {
@@ -352,6 +340,12 @@ export default function CalendarCreator() {
     selectDay(dateKey(next.getFullYear(), next.getMonth(), next.getDate()));
   };
   // Pinch on the month: Compact ↔ Stacked ↔ Details.
+  // Choosing a view: Compact, Stacked and Details start at the top of the page
+  // (the week view scrolls to the hours by itself).
+  const chooseView = (next: typeof view) => {
+    setView(next);
+    if (next !== 'week') scrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
   const pinchView = (direction: 1 | -1) => {
     const i = MONTH_VIEWS.indexOf(view);
     const next = MONTH_VIEWS[Math.min(MONTH_VIEWS.length - 1, Math.max(0, i + direction))];
@@ -359,17 +353,38 @@ export default function CalendarCreator() {
   };
 
   const openModal = () => {
-    setStartInput('');
-    setEndInput('');
+    setEditingSlot(null);
+    setStartInput('09:00');
+    setEndInput('10:00');
     setError('');
     setModalVisible(true);
   };
 
   /** Long-press on the Day timeline: add availability from that time (one hour, adjustable). */
-  const openModalAt = (minutes: number) => {
+  // Day view: a time range marked by press, hold and drag → "add availability" with it filled in.
+  const [selectingRange, setSelectingRange] = useState(false);
+  // Tapping an availability slot: a small menu (Edit / Remove / Cancel). Edit reuses the add form.
+  const [slotMenu, setSlotMenu] = useState<Slot | null>(null);
+  const [editingSlot, setEditingSlot] = useState<Slot | null>(null);
+  /** The saved availability a (possibly split-up) free piece belongs to. */
+  const openSlotMenu = (piece: Slot) => setSlotMenu(availableSlots.find((s) => s.id === piece.id) ?? piece);
+  const startEdit = (slot: Slot) => {
+    setEditingSlot(slot);
+    setStartInput(slot.start);
+    setEndInput(slot.end);
+    setError('');
+    setSlotMenu(null);
+    setModalVisible(true); // same pop-up: switches from the menu to the form
+  };
+  const removeFromMenu = (slot: Slot) => {
+    setSlotMenu(null);
+    setTimeout(() => confirmRemoveAvailable(slot), 350); // after the menu has closed
+  };
+  const openModalRange = (startMinutes: number, endMinutes: number) => {
     const hhmmOf = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-    setStartInput(hhmmOf(minutes));
-    setEndInput(hhmmOf(Math.min(minutes + 60, 23 * 60 + 59)));
+    setEditingSlot(null);
+    setStartInput(hhmmOf(startMinutes));
+    setEndInput(hhmmOf(Math.min(endMinutes, 23 * 60 + 45)));
     setError('');
     setModalVisible(true);
   };
@@ -378,7 +393,7 @@ export default function CalendarCreator() {
   const onDayEventPress = (e: CalendarEvent) => {
     if (e.kind === 'available') {
       const slot = getFreeSlots(e.date).find((sl) => sl.id === e.id && sl.start === e.start);
-      if (slot) confirmRemoveAvailable(slot);
+      if (slot) openSlotMenu(slot);
       return;
     }
     const a = appointments.find((x) => x.id === e.id);
@@ -434,7 +449,7 @@ export default function CalendarCreator() {
       return;
     }
     const slot: Omit<Slot, 'id'> = {
-      date: selected,
+      date: editingSlot ? editingSlot.date : selected,
       start: normalize(startInput),
       end: normalize(endInput),
       service: 'Available',
@@ -447,9 +462,30 @@ export default function CalendarCreator() {
       setError('The creator calendar is not ready. Try again shortly.');
       return;
     }
-    const existingSlots = [...getAvailableSlots(selected), ...getBookedSlots(selected)];
+    const existingSlots = [...getAvailableSlots(slot.date), ...getBookedSlots(slot.date)]
+      .filter((s) => s.id !== editingSlot?.id);
     if (existingSlots.some((s) => s.start === slot.start && s.end === slot.end)) {
       setError('That timeslot already exists');
+      return;
+    }
+    if (editingSlot) {
+      // Edit: move this availability to the new times.
+      const { data, error } = await supabase
+        .from('creator_slots')
+        .update({ start_time: slot.start, end_time: slot.end })
+        .eq('id', editingSlot.id)
+        .eq('creator_id', creatorId)
+        .eq('status', 'available')
+        .select(SLOT_COLUMNS)
+        .single();
+      if (error) {
+        setError(getErrorMessage(error, 'Could not save the changes.'));
+        return;
+      }
+      const updated = toCalendarSlot(data as CreatorSlotRow) as Slot;
+      setAvailableSlots((slots) => slots.map((s) => (s.id === editingSlot.id ? updated : s)));
+      setEditingSlot(null);
+      setModalVisible(false);
       return;
     }
     const { data, error } = await supabase
@@ -543,7 +579,13 @@ export default function CalendarCreator() {
 
     return (
       <View key={slot.id} style={styles.slotWrap}>
-        <View style={[styles.slot, isBooked && styles.bookedSlot]}>
+        <TouchableOpacity
+          style={[styles.slot, isBooked && styles.bookedSlot]}
+          activeOpacity={0.7}
+          disabled={isBooked}
+          onPress={() => { if (!isBooked) openSlotMenu(slot); }}
+          accessibilityLabel={isBooked ? undefined : `Available ${slot.start} to ${slot.end}. Tap to edit or remove`}
+        >
           <Ionicons
             name="time-outline"
             size={18}
@@ -556,19 +598,19 @@ export default function CalendarCreator() {
             <Text style={styles.slotService}>{slot.service}</Text>
             {isBooked && <Text style={styles.slotCustomer}>{slot.customer}</Text>}
           </View>
-        </View>
+        </TouchableOpacity>
         <View style={styles.slotActions}>
           <TouchableOpacity
             style={[styles.slotAction, styles.removeAction]}
             onPress={() =>
               isBooked
                 ? confirmCancelBooking(slot)
-                : confirmRemoveAvailable(slot)
+                : openSlotMenu(slot)
             }
             hitSlop={8}
-            accessibilityLabel={isBooked ? 'Cancel appointment' : 'Remove available slot'}
+            accessibilityLabel={isBooked ? 'Cancel appointment' : 'Edit or remove available slot'}
           >
-            <Ionicons name="remove" size={16} color={colors.background} />
+            <Ionicons name={isBooked ? 'remove' : 'ellipsis-horizontal'} size={16} color={colors.background} />
           </TouchableOpacity>
         </View>
       </View>
@@ -576,34 +618,42 @@ export default function CalendarCreator() {
   };
 
   const availableForDay = getFreeSlots(selected);
+  // Booked and Available (under the month): everything on the chosen day, also on days that have passed.
   const bookedForDay = getBookedSlots(selected);
+  const upcomingForDay = appointmentsForDay;
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header with + button */}
       <View style={styles.header}>
-        <View style={styles.headerSide} />
+        {/* Week view: ← back to the month (Details) */}
+        <View style={styles.headerSide}>
+          {view === 'week' && (
+            // Not a chevron (those step through days): a "Month" button with a grid icon
+            <TouchableOpacity style={styles.monthButton} onPress={() => chooseView('details')} hitSlop={8} accessibilityLabel="Back to month">
+              <Ionicons name="arrow-back" size={16} color={colors.wine} />
+              <Ionicons name="grid-outline" size={15} color={colors.wine} />
+            </TouchableOpacity>
+          )}
+        </View>
         <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
         <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-          <ViewMenu view={view} onChange={setView} />
+          <ViewMenu view={view} onChange={chooseView} />
         </View>
       </View>
 
-      <ScrollView ref={scrollRef} refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Next Booking */}
-        <View style={styles.nextUp}>
-          <Text style={styles.nextUpLabel}>Next Booking</Text>
-          {/* Row 1: date + time. Row 2 (smaller): service · customer */}
-          <View style={styles.nextUpRow}>
-            <Text style={styles.nextUpText}>
-              {nextUp ? `${shortLabel(nextUp.date)} ${nextUp.start}–${nextUp.end}` : 'You have no upcoming booked appointments.'}
-            </Text>
-            {nextUp && <Image source={STAR} style={styles.nextUpStar} />}
-          </View>
-          {nextUp && <Text style={styles.nextUpDetail}>{nextUp.label}</Text>}
-        </View>
+      {/* Week view: the week's days + the chosen day's date stay at the top; that one day, large, below */}
+      {view === 'week' && (
+        <WeekHeader dateKey={selected} todayKey={todayKey} onChangeDay={changeDay} onSelectDay={selectDay} />
+      )}
 
-        <BookingFlow
+      <ScrollView ref={scrollRef} scrollEnabled={!selectingRange} refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={{ paddingBottom: 32 }}>
+        {/* Booking activity: one button; "See all" opens everything (requests, bookings, cancellations) */}
+        <BookingActivity
+          perspective="creator"
+          userId={creatorId}
+          isUnread={(a) => !a.seen_by_creator_at && a.status !== 'pending'}
+          onOpened={() => { markBookingsSeen().catch(() => {}); }}
           items={flow}
           loading={flowLoading}
           busyId={busyRequestId}
@@ -613,17 +663,18 @@ export default function CalendarCreator() {
           onChat={openChat}
         />
 
-        {view === 'day' ? (
+        {view === 'week' ? (
           // Opens scrolled to the morning.
           <View onLayout={(e) => scrollRef.current?.scrollTo({ y: e.nativeEvent.layout.y + 7.5 * HOUR_HEIGHT, animated: false })}>
             <DayTimeline
+              showHeader={false}
               dateKey={selected}
               todayKey={todayKey}
               events={byDate[selected] ?? []}
               onChangeDay={changeDay}
-              onToday={() => selectDay(todayKey)}
               onEventPress={onDayEventPress}
-              onLongPressTime={openModalAt}
+              onSelectRange={openModalRange}
+              onSelecting={setSelectingRange}
             />
           </View>
         ) : (
@@ -634,41 +685,27 @@ export default function CalendarCreator() {
             onChangeMonth={changeMonth}
             todayKey={todayKey}
             selected={selected}
-            onSelectDay={setSelected}
+            // Tap a day: open it in the day view
+            // First tap: choose the day (same view). Tap the chosen day again: its week, hour by hour.
+            onSelectDay={(key) => { if (key === selected) chooseView('week'); else selectDay(key); }}
             events={byDate}
             starDate={nextUp?.date}
             onPinch={pinchView}
           />
         )}
 
-        {/* Available slots for selected day */}
-        {view !== 'day' && <>
-        <View style={styles.slotsHeader}>
-          <Text style={styles.slotsTitle}>Available<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
-          <TouchableOpacity onPress={openModal} hitSlop={10} accessibilityLabel="Add available slot">
-            <Ionicons name="add" size={26} color={colors.wine} />
-          </TouchableOpacity>
-        </View>
-        <View style={{ paddingHorizontal: 16 }}>
-          {slotsLoadError ? <Text style={styles.error}>{slotsLoadError}</Text> : null}
-          {availableForDay.length === 0 && (
-            <Text style={styles.empty}>
-              {slotsLoading ? 'Loading creator calendar...' : 'No available slots this day.'}
-            </Text>
-          )}
-          {availableForDay.map((slot) => <Fragment key={`${slot.id}-${slot.start}`}>{renderSlot(slot)}</Fragment>)}
-        </View>
-
+        {/* Under the month: what's booked (still to come), then what's available, for the chosen day */}
+        {view !== 'week' && <>
         <View style={styles.slotsHeader}>
           <Text style={styles.slotsTitle}>Booked<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
         </View>
         <View style={{ paddingHorizontal: 16 }}>
-          {bookedForDay.length === 0 && appointmentsForDay.length === 0 && (
+          {bookedForDay.length === 0 && upcomingForDay.length === 0 && (
             <Text style={styles.empty}>
               {slotsLoading ? 'Loading creator calendar...' : 'No booked appointments this day.'}
             </Text>
           )}
-          {appointmentsForDay.map((a) => (
+          {upcomingForDay.map((a) => (
             <View key={a.id} style={styles.slotWrap}>
               <View style={[styles.slot, styles.bookedSlot]}>
                 <Ionicons name="calendar-outline" size={18} color={colors.blue} />
@@ -702,8 +739,8 @@ export default function CalendarCreator() {
                 </View>
               </View>
               <View style={styles.slotActions}>
-                {/* Save to Apple/Google Calendar */}
-                {a.status === 'confirmed' && (
+                {/* Save to Apple/Google Calendar (not for days that have passed) */}
+                {a.status === 'confirmed' && a.appointment_date >= todayKey && (
                   <TouchableOpacity
                     style={[styles.slotAction, styles.calendarAction]}
                     onPress={() => addAppointmentToCalendar(a, 'creator')}
@@ -729,6 +766,22 @@ export default function CalendarCreator() {
           ))}
           {bookedForDay.map(renderSlot)}
         </View>
+
+        <View style={styles.slotsHeader}>
+          <Text style={styles.slotsTitle}>Available<Text style={styles.titleDot}> • </Text>{longLabel(selected)}</Text>
+          <TouchableOpacity onPress={openModal} hitSlop={10} accessibilityLabel="Add available slot">
+            <Ionicons name="add" size={26} color={colors.wine} />
+          </TouchableOpacity>
+        </View>
+        <View style={{ paddingHorizontal: 16 }}>
+          {slotsLoadError ? <Text style={styles.error}>{slotsLoadError}</Text> : null}
+          {availableForDay.length === 0 && (
+            <Text style={styles.empty}>
+              {slotsLoading ? 'Loading creator calendar...' : 'No available slots this day.'}
+            </Text>
+          )}
+          {availableForDay.map((slot) => <Fragment key={`${slot.id}-${slot.start}`}>{renderSlot(slot)}</Fragment>)}
+        </View>
         </>}
       </ScrollView>
 
@@ -748,43 +801,51 @@ export default function CalendarCreator() {
         />
       )}
 
-      {/* Add booking modal */}
+      {/* Availability: the slot menu (Edit / Remove / Cancel) or the add/edit form, in one pop-up */}
       <Modal
-        visible={modalVisible}
+        visible={modalVisible || slotMenu !== null}
         transparent
         animationType="fade"
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={() => { setModalVisible(false); setSlotMenu(null); setEditingSlot(null); }}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add availability</Text>
-            <Text style={styles.modalDate}>{longLabel(selected)}</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Start (e.g. 09:00)"
-              value={startInput}
-              onChangeText={setStartInput}
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="End (e.g. 11:00)"
-              value={endInput}
-              onChangeText={setEndInput}
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <View style={styles.modalButtons}>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+          {slotMenu ? (
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Available</Text>
+              <Text style={styles.modalDate}>{longLabel(slotMenu.date)} · {slotMenu.start}–{slotMenu.end}</Text>
+              {/* Buttons stacked under each other */}
+              <TouchableOpacity style={styles.menuPrimary} onPress={() => startEdit(slotMenu)}>
+                <Ionicons name="create-outline" size={18} color={colors.wine} />
+                <Text style={styles.menuPrimaryText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuDanger} onPress={() => removeFromMenu(slotMenu)}>
+                <Ionicons name="trash-outline" size={18} color={colors.wine} />
+                <Text style={styles.menuDangerText}>Remove</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuCancel} onPress={() => setSlotMenu(null)}>
                 <Text style={styles.cancel}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.saveButton} onPress={saveSlot}>
-                <Text style={styles.saveText}>Add</Text>
-              </TouchableOpacity>
             </View>
-          </View>
+          ) : (
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>{editingSlot ? 'Edit availability' : 'Add availability'}</Text>
+              <Text style={styles.modalDate}>{longLabel(editingSlot ? editingSlot.date : selected)}</Text>
+              {/* Scroll to choose the times (15-minute steps) */}
+              <View style={styles.wheels}>
+                <TimeWheel label="Start" value={startInput} onChange={setStartInput} />
+                <TimeWheel label="End" value={endInput} onChange={setEndInput} />
+              </View>
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <View style={styles.modalButtons}>
+                <TouchableOpacity onPress={() => { setModalVisible(false); setEditingSlot(null); }}>
+                  <Text style={styles.cancel}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveButton} onPress={saveSlot}>
+                  <Text style={styles.saveText}>{editingSlot ? 'Save' : 'Add'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </View>
       </Modal>
       <RefreshStar refreshing={pull.refreshing} y={120} />
@@ -793,6 +854,7 @@ export default function CalendarCreator() {
 }
 
 const styles = StyleSheet.create({
+  monthButton: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.pinkTint },
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
@@ -802,20 +864,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   title: { fontSize: 20 },
-  headerSide: { flex: 1 },
-  nextUp: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 20,
-    padding: 18,
-    borderRadius: 14,
-    backgroundColor: colors.blue,
-  },
-  nextUpLabel: { fontSize: 12, fontFamily: fonts.title, color: colors.blueDeep, textTransform: 'uppercase' },
-  nextUpText: { fontSize: 24, fontWeight: '700', marginTop: 6, color: colors.background },
-  nextUpRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  nextUpStar: { width: 18, height: 18, alignSelf: 'flex-start', marginTop: -2, marginLeft: -5 }, // up and to the right of the date/time
-  nextUpDetail: { fontSize: 15, marginTop: 4, color: colors.background }, // service · person
+  headerSide: { flex: 1 }, // up and to the right of the date/time // service · person
   slotsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -875,6 +924,12 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   modalCard: { backgroundColor: colors.background, borderRadius: 14, padding: 20 },
+  wheels: { flexDirection: 'row', gap: 12, marginBottom: 8 },
+  menuPrimary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.pink, borderRadius: 12, paddingVertical: 13, marginTop: 4 },
+  menuPrimaryText: { color: colors.wine, fontSize: 16, fontWeight: '700' },
+  menuDanger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: colors.wine, borderRadius: 12, paddingVertical: 12, marginTop: 10 },
+  menuDangerText: { color: colors.wine, fontSize: 16, fontWeight: '700' },
+  menuCancel: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
   modalTitle: { fontSize: 17, color: colors.ink, fontFamily: fonts.title },
   modalDate: { fontSize: 15, marginTop: 4, marginBottom: 12, color: colors.ink }, // second row under the title
   input: {

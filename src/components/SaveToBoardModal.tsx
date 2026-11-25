@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
 import { colors, fonts } from '../theme';
@@ -98,6 +98,8 @@ export default function SaveToBoardModal({ visible, kind, targetId, onClose, onC
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       {/* Lifts the sheet above the keyboard while typing a new collection name */}
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        {/* Tap outside the sheet to close it */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
         <View style={styles.sheet}>
           <View style={styles.header}>
             <Text style={styles.heading}>NAIL IT</Text>

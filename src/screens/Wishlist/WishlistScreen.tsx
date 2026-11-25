@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../../components/AppText';
 import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
 import BookingModal from '../../components/BookingModal';
+import { useIsFreelancer } from '../../services/myRole';
 import type { BookableCreator, FreeTime } from '../../services/findBooking';
 import SparkleStars, { HIDDEN_SPINNER, RefreshStar, type SparkleStarsHandle } from '../../components/SparkleStars';
 import { colors, fonts } from '../../theme';
@@ -102,6 +103,7 @@ export default function WishlistScreen({ navigation }: any) {
   const [busy, setBusy] = useState(false);
   // Tapping a saved photo opens the same photo view as the Explore feed (like, profile, free times…).
   const [sheetPostId, setSheetPostId] = useState<string | null>(null);
+  const isFreelancer = useIsFreelancer();
   const [booking, setBooking] = useState<{ creator: { id: string; name: string }; date: string | null; start: string | null; serviceIds: string[] | null } | null>(null);
   const [menuBoard, setMenuBoard] = useState<WishlistBoard | null>(null); // press-and-hold menu
   const [itemMenu, setItemMenu] = useState<WishlistEntry | null>(null);    // remove-item pop-up
@@ -506,7 +508,7 @@ export default function WishlistScreen({ navigation }: any) {
         savedIds={savedPostIds}
         onSavedChanged={() => void reload(true)}
         onClose={() => setSheetPostId(null)}
-        onBook={bookCreator}
+        onBook={isFreelancer ? undefined : bookCreator} // freelancers don't book
         onOpenProfile={goToVendor}
       />
       <BookingModal
