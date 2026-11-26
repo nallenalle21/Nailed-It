@@ -3,12 +3,14 @@ import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, AppState } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
-import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
+// Swipeable tabs (pages slide and follow the finger, like Instagram); the tab bar sits at the bottom.
+import { createMaterialTopTabNavigator, type MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { supabase } from './src/services/supabase';
 import FloatingTabBar from './src/components/FloatingTabBar';
+import UnreadChatsBadge from './src/components/UnreadChatsBadge';
 import {
   clearBookingReminders,
   configureNotifications,
@@ -56,14 +58,14 @@ import AccountSettings from './src/screens/Profile/AccountSettings';
 import ExplorePreferences from './src/screens/Profile/ExplorePreferences';
 
 
-const Tab = createBottomTabNavigator();
+const Tab = createMaterialTopTabNavigator();
 const navigationRef = createNavigationContainerRef<any>();
 
 // Booking reminders show as a banner even while the app is open.
 configureNotifications();
 
 // Bottom menu: floating Instagram-style bar (src/components/FloatingTabBar.tsx) with HORIZON labels.
-const renderTabBar = (props: BottomTabBarProps) => <FloatingTabBar {...props} />;
+const renderTabBar = (props: MaterialTopTabBarProps) => <FloatingTabBar {...props} />;
 const Stack = createNativeStackNavigator();
 
 const getIcon = (name: string, focused: boolean) => {
@@ -78,8 +80,8 @@ const getIcon = (name: string, focused: boolean) => {
   return icons[name] || 'circle';
 };
 
-// Nest the public vendor profile inside the Vendors tab so the bottom tabs
-// stay mounted (and visible) while browsing a creator's profile.
+// Nail tech profiles: opened on top of the tabs (slides in; swipe from the left edge or the
+// back arrow to return). Not a tab: in swipeable tabs every tab is a page you could swipe to.
 function VendorsStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -89,17 +91,35 @@ function VendorsStack() {
   );
 }
 
+// Both roles' tabs: bar at the bottom, swipe between pages (the page follows the finger;
+// screens turn swiping off where they have their own sideways gestures). Tapping a tab
+// switches straight to it (no sliding through the pages in between). Each page is loaded the
+// first time it's needed (the neighbours of the open one are loaded ahead).
+const TAB_NAVIGATOR_PROPS = {
+  tabBarPosition: 'bottom' as const,
+  backBehavior: 'history' as const,
+  tabBar: renderTabBar,
+  screenOptions: ({ route }: { route: { name: string } }) => ({
+    swipeEnabled: true,
+    animationEnabled: false,
+    lazy: true,
+    lazyPreloadDistance: 1,
+    tabBarIcon: ({ focused, color }: { focused: boolean; color: string }) => (
+      <Ionicons name={getIcon(route.name, focused)} size={23} color={color} />
+    ),
+  }),
+};
+
+// Chats: a badge with the number of unread chats.
+const CHATS_OPTIONS = { tabBarBadge: () => <UnreadChatsBadge /> };
+
 function CreatorTabs() {
   return (
-    <Tab.Navigator backBehavior="history" tabBar={renderTabBar} screenOptions={({ route }) => ({
-      headerShown: false,
-      tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-    })}>
+    <Tab.Navigator {...TAB_NAVIGATOR_PROPS}>
       <Tab.Screen name="Explore" component={ExploreCreator} />
-      <Tab.Screen name="Vendors" component={VendorsStack} options={{tabBarButton: () => null, tabBarItemStyle: { display: 'none' },}}/>
       <Tab.Screen name="Wishlist" component={WishlistCreator} options={{ tabBarLabel: 'Inspiration' }} />
       <Tab.Screen name="Calendar" component={CalendarCreator} />
-      <Tab.Screen name="Chats" component={ChatsCreator} />
+      <Tab.Screen name="Chats" component={ChatsCreator} options={CHATS_OPTIONS} />
       <Tab.Screen name="Profile" component={ProfileCreator} />
     </Tab.Navigator>
   );
@@ -107,15 +127,11 @@ function CreatorTabs() {
 
 function UserTabs() {
   return (
-    <Tab.Navigator backBehavior="history" tabBar={renderTabBar} screenOptions={({ route }) => ({
-      headerShown: false,
-      tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-    })}>
+    <Tab.Navigator {...TAB_NAVIGATOR_PROPS}>
       <Tab.Screen name="Explore" component={ExploreUser} />
-      <Tab.Screen name="Vendors" component={VendorsStack} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' } }} />
       <Tab.Screen name="Wishlist" component={WishlistUser} options={{ tabBarLabel: 'Inspiration' }} />
       <Tab.Screen name="Calendar" component={CalendarUser} />
-      <Tab.Screen name="Chats" component={ChatsUser} />
+      <Tab.Screen name="Chats" component={ChatsUser} options={CHATS_OPTIONS} />
       <Tab.Screen name="Profile" component={ProfileUser} />
     </Tab.Navigator>
   );
@@ -225,6 +241,7 @@ export default function App() {
               <Stack.Screen name="CalendarCreator" component={CalendarCreator} options={{ headerShown: false }} />
               <Stack.Screen name="ChatRoom" component={ChatRoom} options={{ headerShown: false }} />
               <Stack.Screen name="VendorProfile" component={VendorProfile} options={{ headerShown: false }} />
+              <Stack.Screen name="Vendors" component={VendorsStack} options={{ headerShown: false }} />
               <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'creator' }} />
               <Stack.Screen name="EditAbout" component={AboutEdit} />
               <Stack.Screen name="EditPause" component={PauseEdit} />
@@ -256,6 +273,7 @@ export default function App() {
                 component={VendorProfile}
                 options={{ headerShown: false }}
               />
+              <Stack.Screen name="Vendors" component={VendorsStack} options={{ headerShown: false }} />
             </Stack.Group>
           )}
         </Stack.Navigator>

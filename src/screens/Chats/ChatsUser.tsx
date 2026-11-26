@@ -9,6 +9,8 @@ import { Text } from '../../components/AppText';
 import { supabase } from '../../services/supabase';
 import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import NewChat from '../../components/NewChat';
+import SwipeToArchive from '../../components/SwipeToArchive';
+import { fetchChatReads, isChatUnread, markChatRead, markChatUnread, onChatReadsChanged } from '../../services/chatReads';
 
 export default function ChatsUser({ navigation }: any) {
   const [chats, setChats] = useState<any[]>([]);
@@ -24,6 +26,8 @@ export default function ChatsUser({ navigation }: any) {
       .select('*')
       .like('chat_id', `%${user.id}%`) // Hämtar bara chattar där din inloggade användare är med
       .order('created_at', { ascending: false });
+    // What you've read (the newest message per chat decides if it's unread)
+    const reads = await fetchChatReads();
 
     if (data) {
       // 1. Filtrera fram unika chattrum
@@ -40,7 +44,7 @@ export default function ChatsUser({ navigation }: any) {
             creatorName: 'Laddar...', // Platshållare medan vi hämtar namnet
             lastMessage: message.text,
             time: new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            unread: false
+            unread: isChatUnread(message, reads.get(message.chat_id), user.id)
           });
         }
         return acc;
@@ -77,6 +81,24 @@ export default function ChatsUser({ navigation }: any) {
     fetchMyChats(); // eslint-disable-line react-hooks/set-state-in-effect -- loads data; state is set when it arrives
   }, [fetchMyChats]);
 
+  // Unread marks change (opened a chat, swiped) or a new message arrives: refresh the list.
+  useEffect(() => onChatReadsChanged(() => void fetchMyChats()), [fetchMyChats]);
+  useEffect(() => {
+    const channel = supabase
+      .channel(`chat-list-${Math.random().toString(36).slice(2)}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => void fetchMyChats())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchMyChats]);
+  // Rows swipe sideways (read/unread), so swiping to another tab is off here: use the tab bar.
+  useEffect(() => { navigation.setOptions({ swipeEnabled: false }); }, [navigation]);
+
+  /** Swipe a chat: mark it unread to deal with later, or read again. */
+  const toggleUnread = (item: any) => {
+    setChats((prev) => prev.map((c) => (c.id === item.id ? { ...c, unread: !item.unread } : c)));
+    void (item.unread ? markChatRead(item.id) : markChatUnread(item.id));
+  };
+
   const handlePressChat = (chatId: string, creatorName: string) => {
     navigation.navigate('ChatRoom', { chatId, customerName: creatorName, role: 'user' });
   };
@@ -84,6 +106,12 @@ export default function ChatsUser({ navigation }: any) {
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
 
   const renderItem = ({ item }: any) => (
+    <SwipeToArchive
+      onSwiped={() => toggleUnread(item)}
+      label={item.unread ? 'READ' : 'UNREAD'}
+      icon={item.unread ? 'mail-open-outline' : 'mail-unread-outline'}
+      wrapStyle={styles.swipeRow}
+    >
     <TouchableOpacity style={styles.chatItem} onPress={() => handlePressChat(item.id, item.creatorName)}>
       {item.avatarUrl ? (
         <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
@@ -103,6 +131,7 @@ export default function ChatsUser({ navigation }: any) {
       </View>
       {item.unread && <View style={styles.unreadDot} />}
     </TouchableOpacity>
+    </SwipeToArchive>
   );
 
   return (
@@ -128,7 +157,7 @@ const styles = StyleSheet.create({
   emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 80 },
   emptyText: { color: colors.inkMuted, fontSize: 15 },
   listContainer: { paddingHorizontal: 20, paddingBottom: 96 }, // room for the new-chat button
-  chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line },
+  chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.background },
   avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15, backgroundColor: colors.line },
   avatarFallback: { backgroundColor: colors.pink, alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { color: colors.wine, fontSize: 20, fontWeight: '700' },
@@ -138,5 +167,6 @@ const styles = StyleSheet.create({
   time: { fontSize: 12, color: colors.inkMuted },
   message: { fontSize: 14, color: colors.inkMuted },
   unreadText: { fontWeight: 'bold', color: colors.ink },
-  unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: 'red', marginLeft: 10 },
+  unreadDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: colors.wine, marginLeft: 10 }, // new message
+  swipeRow: { marginBottom: 0, borderRadius: 0 },
 });

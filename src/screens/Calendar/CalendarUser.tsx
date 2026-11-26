@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ComponentRef } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import PageHeader from '../../components/PageHeader';
 import { handle } from '../../utils/handle';
@@ -81,6 +81,8 @@ export default function CalendarUser() {
   const navigation = useNavigation<any>();
   // Compact / Stacked / Details / Day, remembered on this phone.
   const [view, setView] = useCalendarView('calendarView.customer');
+  // Swipe to the next tab in the month views; in the week view a sideways swipe changes the day.
+  useEffect(() => { navigation.setOptions({ swipeEnabled: view !== 'week' }); }, [navigation, view]);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   // Same as Explore: the public profile lives in the Vendors tab.

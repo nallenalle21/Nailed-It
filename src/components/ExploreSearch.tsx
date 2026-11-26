@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
-import { ActivityIndicator, Image, Keyboard, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Keyboard, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { TextInput } from './AppTextInput';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
@@ -28,6 +28,8 @@ type Props = {
   onClose: () => void;
   /** The page itself (map, feed …): hidden while searching, like Instagram. */
   children: ReactNode;
+  /** The screen around it doesn't scroll (Explore's Feed/Book pages): let the search results scroll by themselves. */
+  scrollResults?: boolean;
 };
 
 /**
@@ -37,7 +39,7 @@ type Props = {
  * one opens their profile; "See photos for …" filters the feed instead. The feed itself is
  * never filtered just by typing.
  */
-export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProfile, placeholder, open: barOpen, onClose, children }: Props) {
+export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProfile, placeholder, open: barOpen, onClose, children, scrollResults }: Props) {
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const [query, setQuery] = useState(feedQuery);
   const [searching, setSearching] = useState(false);
@@ -143,7 +145,9 @@ export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProf
           ) : null}
           {children}
         </>
-      ) : !q ? (
+      ) : (scrollResults ? (results: ReactNode) => (
+        <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">{results}</ScrollView>
+      ) : (results: ReactNode) => results)(!q ? (
         // Empty search: recent profiles
         <View style={styles.panel}>
           {recents.length > 0 ? (
@@ -179,7 +183,7 @@ export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProf
             <Text style={styles.photosText} numberOfLines={1}>See photos for “{q}”</Text>
           </TouchableOpacity>
         </View>
-      )}
+      ))}
     </>
   );
 }

@@ -382,8 +382,40 @@ export default function ExploreUser({ navigation }: any) {
     return () => { active = false; };
   }, []));
 
+  // Feed and Book are two pages side by side: swipe between them (the page follows the
+  // finger), or tap Feed/Book at the top to slide over.
+  const pagerRef = useRef<any>(null);
+  const [pageWidth, setPageWidth] = useState(0);
+  // The pink pill under Feed/Book slides along with the swipe (not only when the page stops),
+  // and the highlighted word switches as soon as you're past halfway.
+  const pagerX = useRef(new Animated.Value(0)).current;
+  const [toggleWidth, setToggleWidth] = useState(0);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const onPagerScroll = useMemo(() => Animated.event(
+    [{ nativeEvent: { contentOffset: { x: pagerX } } }],
+    {
+      useNativeDriver: true,
+      listener: (e: any) => {
+        const next = pageWidth > 0 && e.nativeEvent.contentOffset.x > pageWidth / 2 ? 'book' : 'inspire';
+        if (next !== modeRef.current) setMode(next);
+      },
+    },
+  ), [pagerX, pageWidth]);
+  const [pagerLocked, setPagerLocked] = useState(false); // finger on the map or a photo strip
   const changeMode = (next: 'inspire' | 'book') => {
     setMode(next);
+    pagerRef.current?.scrollTo({ x: next === 'book' ? pageWidth : 0, animated: true });
+  };
+  const settlePage = (x: number) => {
+    const next = pageWidth > 0 && Math.round(x / pageWidth) === 1 ? 'book' : 'inspire';
+    if (next !== mode) setMode(next);
+  };
+  // Swiping on from Book slides over to Inspiration (the tab bar's taps don't slide).
+  const slideToInspiration = () => {
+    navigation.setOptions({ animationEnabled: true });
+    setTimeout(() => navigation.navigate('Wishlist'), 0);
+    setTimeout(() => navigation.setOptions({ animationEnabled: false }), 600);
   };
 
   // Swipe sideways anywhere on Explore to switch between "Feed" and "Book".
@@ -391,23 +423,32 @@ export default function ExploreUser({ navigation }: any) {
   // the map and the photo strips keep working: those block the switch while they're used.
   const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
   const swipeBlocked = useRef(false);
-  const blockTabSwipe = useCallback(() => { swipeBlocked.current = true; }, []);
+  // A touch on the map or a photo strip: that drags, the Feed/Book pages stay put.
+  const blockTabSwipe = useCallback(() => { swipeBlocked.current = true; setPagerLocked(true); }, []);
+  const modeAtTouch = useRef<'inspire' | 'book'>('inspire');
   const onSwipeTouchStart = (e: GestureResponderEvent) => {
     const { pageX, pageY, touches } = e.nativeEvent;
     swipeStart.current = touches.length > 1 ? null : { x: pageX, y: pageY, t: Date.now() };
+    modeAtTouch.current = mode;
   };
   const onSwipeTouchEnd = (e: GestureResponderEvent) => {
     const start = swipeStart.current;
     const blocked = swipeBlocked.current;
     swipeStart.current = null;
     swipeBlocked.current = false;
+    setPagerLocked(false);
     if (!start || blocked) return;
     const dx = e.nativeEvent.pageX - start.x;
     const dy = e.nativeEvent.pageY - start.y;
     // A quick, clearly sideways swipe (not a scroll or a slow drag).
     if (Math.abs(dx) < SWIPE_MIN_DISTANCE || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - start.t > SWIPE_MAX_MS) return;
-    changeMode(mode === 'inspire' ? 'book' : 'inspire');
+    // Feed ↔ Book is the pages themselves (they follow the finger). Already on Book and
+    // swiping left again: on to Inspiration.
+    if (modeAtTouch.current === 'book' && dx < 0) slideToInspiration();
   };
+  // Explore handles its own sideways swipes (above), so the tabs' finger-following swipe is
+  // off here; the map in Book can be dragged freely.
+  useEffect(() => { navigation.setOptions({ swipeEnabled: false }); }, [navigation]);
 
   /** Book from a card, the map or the photo sheet: a free time (pre-selected) or all times. */
   const bookCreator = (c: BookableCreator, time: FreeTime | null) => {
@@ -612,6 +653,26 @@ export default function ExploreUser({ navigation }: any) {
     />
   );
 
+  // Each page (Feed, Book) scrolls up/down by itself, with pull-to-refresh.
+  const pageScrollProps = {
+    scrollEnabled,
+    refreshControl: (
+      <RefreshControl
+        refreshing={pulling}
+        {...HIDDEN_SPINNER}
+        onRefresh={() => {
+          pulled.current = true;
+          sawLoading.current = false;
+          setPulling(true);
+          setFeedRefresh(n => n + 1);
+        }}
+      />
+    ),
+    showsVerticalScrollIndicator: false,
+    keyboardShouldPersistTaps: 'handled' as const,
+    contentContainerStyle: { paddingBottom: 32 },
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Title in the middle (changes with Feed/Book), search + filters on the right */}
@@ -652,41 +713,39 @@ export default function ExploreUser({ navigation }: any) {
         onLayout={onOverlayLayout}
         onTouchStart={onSwipeTouchStart}
         onTouchEnd={onSwipeTouchEnd}
-        onTouchCancel={() => { swipeStart.current = null; swipeBlocked.current = false; }}
+        onTouchCancel={() => { swipeStart.current = null; swipeBlocked.current = false; setPagerLocked(false); }}
       >
-        <ScrollView
-          scrollEnabled={scrollEnabled}
-          refreshControl={
-            <RefreshControl
-              refreshing={pulling}
-              {...HIDDEN_SPINNER}
-              onRefresh={() => {
-                pulled.current = true;
-                sawLoading.current = false;
-                setPulling(true);
-                setFeedRefresh(n => n + 1);
-              }}
-            />
-          }
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 32 }}
+        {/* Search (from the header) on top; then Feed | Book as two pages side by side */}
+        <ExploreSearch
+          feedQuery={feedQuery}
+          onFeedQueryChange={setFeedQuery}
+          onOpenProfile={goToProfile}
+          placeholder="search usernames"
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          scrollResults
         >
-          {/* PART 1: search (people, Instagram-style), opened from the header's search icon */}
-          <ExploreSearch
-            feedQuery={feedQuery}
-            onFeedQueryChange={setFeedQuery}
-            onOpenProfile={goToProfile}
-            placeholder="search usernames"
-            open={searchOpen}
-            onClose={() => setSearchOpen(false)}
-          >
-            {/* Inspiration feed or booking: the two ways to use Explore */}
-            <View style={styles.modeToggle}>
+          <View style={{ flex: 1 }}>
+            <View style={styles.modeToggle} onLayout={(e) => setToggleWidth(e.nativeEvent.layout.width)}>
+              {toggleWidth > 0 && pageWidth > 0 && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.modePill, {
+                    width: (toggleWidth - 8) / 2,
+                    transform: [{
+                      translateX: pagerX.interpolate({
+                        inputRange: [0, pageWidth],
+                        outputRange: [0, (toggleWidth - 8) / 2],
+                        extrapolate: 'clamp',
+                      }),
+                    }],
+                  }]}
+                />
+              )}
               {(['inspire', 'book'] as const).map((m) => (
                 <TouchableOpacity
                   key={m}
-                  style={[styles.modeOption, mode === m && styles.modeOptionActive]}
+                  style={styles.modeOption}
                   onPress={() => changeMode(m)}
                   accessibilityRole="tab"
                   accessibilityState={{ selected: mode === m }}
@@ -697,84 +756,106 @@ export default function ExploreUser({ navigation }: any) {
               ))}
             </View>
 
-            {mode === 'book' ? (
-              <>
-                <BookView
-                  photosByCreator={photosByCreator}
-                  services={services}
-                  date={date ? toDateKey(date) : null}
-                  matchesPrice={priceRange ? (price) => inPriceRange(price, priceRange) : null}
-                  sort={sort}
-                  refreshKey={feedRefresh}
-                  onBook={bookCreator}
-                  onOpenProfile={goToProfile}
-                  onSidewaysTouch={blockTabSwipe}
-                  renderMap={(list) => (
-                    <MapView
-                      style={styles.map}
-                      initialRegion={STOCKHOLM}
-                      onRegionChangeComplete={(r) => setMapZoomedIn(r.latitudeDelta < SHOW_AREA_BELOW_DELTA)}
-                    >
-                      {/* Studios: an approximate 200 m area when zoomed in, never the exact address.
-                          Mobile-only nail techs keep the pin in their area (customers don't go to them). */}
-                      {list.map((c) => {
-                        const approx = c.workplaceTypes.some((w) => w !== 'mobile') ? approxPoints[c.id] : undefined;
-                        return approx && mapZoomedIn ? (
-                          <Circle
-                            key={`${c.id}-area`}
-                            center={approx}
-                            radius={APPROX_RADIUS_M}
-                            fillColor="rgba(250,137,171,0.22)"
-                            strokeColor="rgba(140,41,46,0.35)"
-                            strokeWidth={1}
-                          />
-                        ) : null;
-                      })}
-                      {list.map((c) => (
-                        <Marker
-                          key={c.id}
-                          coordinate={(c.workplaceTypes.some((w) => w !== 'mobile') ? approxPoints[c.id] : undefined) ?? c.areaPoint ?? demoCoordinate(c.id)}
-                          // Tap a pin: the bubble (name · area · from X kr). Tap the bubble: their profile.
-                          title={c.displayName}
-                          description={[c.city, c.fromPrice !== null ? `from ${formatKr(c.fromPrice)}` : null].filter(Boolean).join(' · ')}
-                          onCalloutPress={() => goToProfile(c.id)}
-                          anchor={{ x: 0.5, y: 1 }}
-                          centerOffset={{ x: 0, y: -18 }}
+            {/* Swipe between Feed and Book: the page follows the finger (like the tabs) */}
+            <Animated.ScrollView
+              ref={pagerRef}
+              horizontal
+              pagingEnabled
+              onScroll={onPagerScroll}
+              scrollEventThrottle={16}
+              bounces={false}
+              showsHorizontalScrollIndicator={false}
+              scrollEnabled={scrollEnabled && !pagerLocked}
+              keyboardShouldPersistTaps="handled"
+              style={{ flex: 1 }}
+              onLayout={(e) => setPageWidth(e.nativeEvent.layout.width)}
+              onMomentumScrollEnd={(e) => settlePage(e.nativeEvent.contentOffset.x)}
+            >
+              {pageWidth > 0 && (
+                <>
+                  {/* Feed */}
+                  <ScrollView style={{ width: pageWidth }} {...pageScrollProps}>
+                    {/* PART 2: real artwork feed */}
+                    {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
+                    {feedError ? (
+                      <View style={styles.feedStatus}>
+                        <Text style={styles.feedError}>Could not load creator photos: {feedError}</Text>
+                        <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)}>
+                          <Text style={styles.retryText}>Try again</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : feedLoading && inspoPosts.length === 0 ? (
+                      <ActivityIndicator style={{ marginTop: 28 }} color={colors.primary} size="large" />
+                    ) : filteredPosts.length === 0 ? (
+                      <Text style={styles.feedEmpty}>
+                        {inspoPosts.length === 0
+                          ? 'No creator photos have been uploaded yet.'
+                          : 'No photos match these filters.'}
+                      </Text>
+                    ) : (
+                      <View style={styles.feed}>
+                        <View style={styles.feedCol}>{colA.map(renderTile)}</View>
+                        <View style={styles.feedCol}>{colB.map(renderTile)}</View>
+                      </View>
+                    )}
+                  </ScrollView>
+
+                  {/* Book */}
+                  <ScrollView style={{ width: pageWidth }} {...pageScrollProps}>
+                    <BookView
+                      photosByCreator={photosByCreator}
+                      services={services}
+                      date={date ? toDateKey(date) : null}
+                      matchesPrice={priceRange ? (price) => inPriceRange(price, priceRange) : null}
+                      sort={sort}
+                      refreshKey={feedRefresh}
+                      onBook={bookCreator}
+                      onOpenProfile={goToProfile}
+                      onSidewaysTouch={blockTabSwipe}
+                      renderMap={(list) => (
+                        <MapView
+                          style={styles.map}
+                          initialRegion={STOCKHOLM}
+                          onRegionChangeComplete={(r) => setMapZoomedIn(r.latitudeDelta < SHOW_AREA_BELOW_DELTA)}
                         >
-                          <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
-                        </Marker>
-                      ))}
-                    </MapView>
-                  )}
-                />
-              </>
-            ) : <>
-            {/* PART 2: real artwork feed */}
-            {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
-            {feedError ? (
-              <View style={styles.feedStatus}>
-                <Text style={styles.feedError}>Could not load creator photos: {feedError}</Text>
-                <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)}>
-                  <Text style={styles.retryText}>Try again</Text>
-                </TouchableOpacity>
-              </View>
-            ) : feedLoading && inspoPosts.length === 0 ? (
-              <ActivityIndicator style={{ marginTop: 28 }} color={colors.primary} size="large" />
-            ) : filteredPosts.length === 0 ? (
-              <Text style={styles.feedEmpty}>
-                {inspoPosts.length === 0
-                  ? 'No creator photos have been uploaded yet.'
-                  : 'No photos match these filters.'}
-              </Text>
-            ) : (
-              <View style={styles.feed}>
-                <View style={styles.feedCol}>{colA.map(renderTile)}</View>
-                <View style={styles.feedCol}>{colB.map(renderTile)}</View>
-              </View>
-            )}
-            </>}
-          </ExploreSearch>
-        </ScrollView>
+                          {/* Studios: an approximate 200 m area when zoomed in, never the exact address.
+                              Mobile-only nail techs keep the pin in their area (customers don't go to them). */}
+                          {list.map((c) => {
+                            const approx = c.workplaceTypes.some((w) => w !== 'mobile') ? approxPoints[c.id] : undefined;
+                            return approx && mapZoomedIn ? (
+                              <Circle
+                                key={`${c.id}-area`}
+                                center={approx}
+                                radius={APPROX_RADIUS_M}
+                                fillColor="rgba(250,137,171,0.22)"
+                                strokeColor="rgba(140,41,46,0.35)"
+                                strokeWidth={1}
+                              />
+                            ) : null;
+                          })}
+                          {list.map((c) => (
+                            <Marker
+                              key={c.id}
+                              coordinate={(c.workplaceTypes.some((w) => w !== 'mobile') ? approxPoints[c.id] : undefined) ?? c.areaPoint ?? demoCoordinate(c.id)}
+                              // Tap a pin: the bubble (name · area · from X kr). Tap the bubble: their profile.
+                              title={c.displayName}
+                              description={[c.city, c.fromPrice !== null ? `from ${formatKr(c.fromPrice)}` : null].filter(Boolean).join(' · ')}
+                              onCalloutPress={() => goToProfile(c.id)}
+                              anchor={{ x: 0.5, y: 1 }}
+                              centerOffset={{ x: 0, y: -18 }}
+                            >
+                              <Image source={MAP_PIN} style={styles.mapPin} resizeMode="contain" />
+                            </Marker>
+                          ))}
+                        </MapView>
+                      )}
+                    />
+                  </ScrollView>
+                </>
+              )}
+            </Animated.ScrollView>
+          </View>
+        </ExploreSearch>
         <RefreshStar refreshing={pulling} y={40} />
 
         {/* Hold-and-drag overlay */}
@@ -1134,7 +1215,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 16, color: colors.ink },
   modeToggle: { flexDirection: 'row', marginHorizontal: 16, marginBottom: 14, padding: 4, borderRadius: 16, backgroundColor: '#f2f2f2' },
   modeOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 12 },
-  modeOptionActive: { backgroundColor: colors.pink },
+  modePill: { position: 'absolute', left: 4, top: 4, bottom: 4, borderRadius: 12, backgroundColor: colors.pink },
   modeText: { fontSize: 14, fontWeight: '600', color: colors.ink },
   modeTextActive: { color: colors.wine, fontWeight: '700' },
   // Search / filter / refresh icons in the page header (same height as the calendar's view button)

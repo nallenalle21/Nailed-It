@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import type { MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts } from '../theme';
 
@@ -11,9 +11,10 @@ const BUBBLE_INSET = 5; // gap between the highlight bubble and the bar's edge
  * Instagram-style floating bottom menu: a rounded bar lifted off the bottom edge with a
  * highlight bubble behind the current tab. Tap an icon, or put a finger on the bar and slide:
  * the bubble follows the finger and the tab under it opens on release.
- * Tabs with tabBarItemStyle { display: 'none' } (e.g. Vendors) are left out.
+ * While swiping between pages, the bubble moves along with the swipe.
+ * Tabs with tabBarItemStyle { display: 'none' } are left out.
  */
-export default function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+export default function FloatingTabBar({ state, descriptors, navigation, position }: MaterialTopTabBarProps) {
   const insets = useSafeAreaInsets();
   const routes = state.routes.filter(
     (r) => (StyleSheet.flatten(descriptors[r.key].options.tabBarItemStyle) as any)?.display !== 'none',
@@ -24,6 +25,7 @@ export default function FloatingTabBar({ state, descriptors, navigation }: Botto
 
   const [tabWidth, setTabWidth] = useState(0);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null); // tab under the finger while sliding
+  const sliding = hoverIndex !== null; // finger on the bar: the bubble follows the finger, not the pages
   const [bubbleX] = useState(() => new Animated.Value(0));
   const [bubbleScale] = useState(() => new Animated.Value(1));
   const barRef = useRef<ComponentRef<typeof View>>(null);
@@ -94,7 +96,14 @@ export default function FloatingTabBar({ state, descriptors, navigation }: Botto
             pointerEvents="none"
             style={[
               styles.bubble,
-              { width: tabWidth, transform: [{ translateX: bubbleX }, { scale: bubbleScale }] },
+              {
+                width: tabWidth,
+                transform: [
+                  // Follows the pages while they're swiped; follows the finger while sliding on the bar.
+                  { translateX: sliding || !position || routes.length !== state.routes.length ? bubbleX : Animated.multiply(position, tabWidth) },
+                  { scale: bubbleScale },
+                ],
+              },
             ]}
           />
         )}
@@ -113,7 +122,11 @@ export default function FloatingTabBar({ state, descriptors, navigation }: Botto
               accessibilityState={{ selected: index === activeIndex }}
               accessibilityLabel={label}
             >
-              {options.tabBarIcon?.({ focused, color, size: 23 })}
+              <View>
+                {options.tabBarIcon?.({ focused, color, size: 23 })}
+                {/* e.g. the number of unread chats on Chats */}
+                {options.tabBarBadge ? <View style={styles.badge} pointerEvents="none">{options.tabBarBadge()}</View> : null}
+              </View>
               <Text style={[styles.label, { color }]} numberOfLines={1}>{label}</Text>
             </Pressable>
           );
@@ -148,5 +161,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.pinkTint,
   },
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  badge: { position: 'absolute', top: -6, right: -12 },
   label: { fontFamily: fonts.title, fontSize: 7 }, // "INSPIRATION" must fit one tab
 });

@@ -143,6 +143,11 @@ export default function WishlistScreen({ navigation }: any) {
 
   // ---- Press-and-hold drag to reorder photos inside a collection ----
   const [dragId, setDragId] = useState<string | null>(null);
+  // Swipe to the next tab only on the collections overview: inside a collection a sideways swipe
+  // goes back, an open photo swipes through photos, and editing/dragging moves photos around.
+  useEffect(() => {
+    navigation.setOptions({ swipeEnabled: !selectedBoardId && !sheetPostId && !editing && !dragId });
+  }, [navigation, selectedBoardId, sheetPostId, editing, dragId]);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null); // live order while dragging
   const drag = useRef<{ id: string; grabX: number; grabY: number; origin: { x: number; y: number }; moved: boolean } | null>(null);
   const slotRects = useRef<Rect[]>([]);   // grid slot positions by index, relative to the grid

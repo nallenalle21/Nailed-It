@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from 'react';
-import { Animated, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Animated, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
@@ -16,6 +16,8 @@ type Props = {
   label?: string;
   icon?: keyof typeof Ionicons.glyphMap;
   enabled?: boolean;
+  /** Override the outer look (e.g. no gap/rounding for list rows). */
+  wrapStyle?: StyleProp<ViewStyle>;
 };
 
 /**
@@ -23,7 +25,7 @@ type Props = {
  * shows on the side you uncover; once you've swiped far enough the background turns wine,
  * and letting go archives the row. Not far enough? It slides back. Scrolling works as usual.
  */
-export default function SwipeToArchive({ children, onSwiped, label = 'Archive', icon = 'archive-outline', enabled = true }: Props) {
+export default function SwipeToArchive({ children, onSwiped, label = 'Archive', icon = 'archive-outline', enabled = true, wrapStyle }: Props) {
   const { width } = useWindowDimensions();
   const threshold = width * 0.35;
   const x = useRef(new Animated.Value(0)).current;
@@ -69,7 +71,7 @@ export default function SwipeToArchive({ children, onSwiped, label = 'Archive', 
   );
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, wrapStyle]}>
       <View style={styles.behind} pointerEvents="none">
         <Animated.View style={[styles.fill, styles.readyFill, { opacity: ready }]} />
         {/* Left side (swiping right) */}

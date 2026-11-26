@@ -10,7 +10,6 @@ import { handle } from '../../utils/handle';
 import { colors, fonts } from '../../theme';
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  BackHandler,
   type GestureResponderEvent,
   ActivityIndicator,
   Alert,
@@ -94,13 +93,9 @@ export default function VendorProfile({ navigation, route }: any) {
   const vendorId: string | undefined = route?.params?.vendorId;
   // Freelancers looking at another nail tech: no booking (Book button, free times in photos).
   const isFreelancer = useIsFreelancer();
-  // The tab this profile was opened from (Explore, Wishlist, Calendar): Back returns there,
-  // e.g. to the photo that was open. Without it, a plain "go back".
-  const from: string | undefined = route?.params?.from;
-  const goBack = useCallback(() => {
-    if (from) navigation.navigate(from);
-    else navigation.goBack();
-  }, [from, navigation]);
+  // The profile opens on top of the tabs, so Back returns to exactly where it was opened
+  // (the tab, and a photo if one was open). Android's back button does this by itself.
+  const goBack = useCallback(() => navigation.goBack(), [navigation]);
   // A portfolio photo opened in the same photo view as the Explore feed (null = none open).
   const [sheetPostId, setSheetPostId] = useState<string | null>(null);
   const [bookingPreset, setBookingPreset] = useState<{ date: string | null; start: string | null; serviceIds: string[] | null } | null>(null);
@@ -121,12 +116,6 @@ export default function VendorProfile({ navigation, route }: any) {
     if (Math.abs(dx) >= 70 && Math.abs(dx) >= Math.abs(dy) * 2 && Date.now() - start.t < 600) goBack();
   };
 
-  // Android's back button does the same while this profile is shown.
-  useFocusEffect(useCallback(() => {
-    if (!from) return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => { goBack(); return true; });
-    return () => sub.remove();
-  }, [from, goBack]));
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);

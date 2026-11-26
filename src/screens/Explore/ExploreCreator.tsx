@@ -142,6 +142,8 @@ export default function ExploreCreator({ navigation }: any) {
   // Book view → booking sheet: who, and the time/service to pre-select.
   // Photo tapped in the feed (opens the "Book this look" sheet).
   const [sheetPhoto, setSheetPhoto] = useState<SheetPhoto | null>(null);
+  // Swipe to the next tab, except while a photo is open (then sideways swipes go through the photos).
+  useEffect(() => { navigation.setOptions({ swipeEnabled: !sheetPhoto }); }, [navigation, sheetPhoto]);
   // The open photo stays open while you book or look at the profile, so Back/Cancel returns to it.
   // The signed-in freelancer: their own card is left out of the Book view.
   // Pull-to-refresh shows a spinning star (RefreshStar) until the feed has reloaded.

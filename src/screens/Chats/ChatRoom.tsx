@@ -10,6 +10,7 @@ import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import { formatKr } from '../../services/booking';
 import { fetchChatOffers, offerEndTime, respondToOffer, withdrawOffer, type BookingOffer } from '../../services/offers';
 import { addAppointmentToCalendar } from '../../services/deviceCalendar';
+import { markChatRead } from '../../services/chatReads';
 import OfferCard from '../../components/OfferCard';
 import OfferComposerModal from '../../components/OfferComposerModal';
 
@@ -88,6 +89,7 @@ export default function ChatRoom({ route, navigation }: any) {
       if (user) {
         setCurrentUserId(user.id);
         await fetchMessages();
+        void markChatRead(chatId); // opened: the chat is read (removes its unread mark)
       }
 
       channel = supabase
@@ -107,6 +109,7 @@ export default function ChatRoom({ route, navigation }: any) {
             return [...prev, newMessage];
           });
           setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+          void markChatRead(chatId); // you're looking at it, so it's read
         })
         // Accepted / declined / withdrawn: the card updates for both people.
         .on('postgres_changes', {
@@ -125,6 +128,7 @@ export default function ChatRoom({ route, navigation }: any) {
 
     return () => {
       if (channel) supabase.removeChannel(channel);
+      void markChatRead(chatId); // leaving: everything up to now has been read
     };
   }, [chatId, fetchMessages, fetchOffers]);
 
