@@ -1,22 +1,11 @@
 import { Fragment, useCallback, useRef, useState, type ComponentRef } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
-import StarredTitle from '../../components/StarredTitle';
+import PageHeader from '../../components/PageHeader';
 import { handle } from '../../utils/handle';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';
-import {
-  View,
-  TouchableOpacity,
-  ScrollView,
-  Modal,
-  TextInput,
-  Alert,
-  StyleSheet,
-  RefreshControl,
-  Platform,
-  type AlertButton,
-} from 'react-native';
+import { View, TouchableOpacity, ScrollView, Modal, Alert, StyleSheet, RefreshControl, Platform, type AlertButton } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
@@ -402,10 +391,19 @@ export default function CalendarCreator() {
       if (legacy) confirmCancelBooking(legacy);
       return;
     }
+    showBookingPopup(a);
+  };
+
+  // The booking pop-up (who, when, what, price; no-show / accept / chat / cancel). Opened from the
+  // day view, Booking activity and the "Booked" list under the month.
+  const showBookingPopup = (a: Appointment) => {
     // Android shows at most three buttons; tapping outside closes it there.
     const close: AlertButton[] = Platform.OS === 'ios' ? [{ text: 'Close', style: 'cancel' }] : [];
     const started = appointmentStart(a) <= new Date();
-    const buttons: AlertButton[] = a.status === 'no_show'
+    const closed = a.status === 'cancelled' || a.status === 'declined' || a.status === 'expired';
+    const buttons: AlertButton[] = closed
+      ? [{ text: 'Chat', onPress: () => openChat(a) }, ...close]
+      : a.status === 'no_show'
       ? [
           { text: 'Undo no-show', onPress: () => setNoShow(a, false) },
           { text: 'Chat', onPress: () => openChat(a) },
@@ -431,10 +429,12 @@ export default function CalendarCreator() {
           ...close,
         ];
     Alert.alert(
-      `${handle(a.customer_name)} · ${e.start}–${e.end}`,
+      `${handle(a.customer_name)} · ${a.start_time.slice(0, 5)}–${a.end_time.slice(0, 5)}`,
       [
         a.status === 'pending' ? 'Booking request, waiting for your answer' : null,
-        e.subtitle,
+        a.status === 'cancelled' ? 'Cancelled' : a.status === 'declined' ? 'Declined' : a.status === 'expired' ? 'Request expired' : null,
+        a.appointment_date !== selected ? longLabel(a.appointment_date) : null,
+        a.services.map((sv) => sv.name).join(', '),
         `${a.total_minutes} min · ${formatKr(a.total_price)}`,
         a.customer_note ? `“${a.customer_note}”` : null,
       ].filter(Boolean).join('\n'),
@@ -625,22 +625,22 @@ export default function CalendarCreator() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header with + button */}
-      <View style={styles.header}>
-        {/* Week view: ← back to the month (Details) */}
-        <View style={styles.headerSide}>
-          {view === 'week' && (
-            // Not a chevron (those step through days): a "Month" button with a grid icon
-            <TouchableOpacity style={styles.monthButton} onPress={() => chooseView('details')} hitSlop={8} accessibilityLabel="Back to month">
-              <Ionicons name="arrow-back" size={16} color={colors.wine} />
-              <Ionicons name="grid-outline" size={15} color={colors.wine} />
-            </TouchableOpacity>
-          )}
-        </View>
-        <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
-        <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-          <ViewMenu view={view} onChange={chooseView} />
-        </View>
-      </View>
+      <PageHeader
+        title="Calendar"
+        left={
+          <>
+            {/* Week view: ← back to the month (Details) */}
+            {view === 'week' && (
+              // Not a chevron (those step through days): a "Month" button with a grid icon
+              <TouchableOpacity style={styles.monthButton} onPress={() => chooseView('details')} hitSlop={8} accessibilityLabel="Back to month">
+                <Ionicons name="arrow-back" size={16} color={colors.wine} />
+                <Ionicons name="grid-outline" size={15} color={colors.wine} />
+              </TouchableOpacity>
+            )}
+          </>
+        }
+        right={<ViewMenu view={view} onChange={chooseView} />}
+      />
 
       {/* Week view: the week's days + the chosen day's date stay at the top; that one day, large, below */}
       {view === 'week' && (
@@ -661,6 +661,7 @@ export default function CalendarCreator() {
           onDecline={(a, reason) => answerRequest(a, false, reason)}
           onCancel={cancelBooking}
           onChat={openChat}
+          onView={showBookingPopup}
         />
 
         {view === 'week' ? (
@@ -707,7 +708,12 @@ export default function CalendarCreator() {
           )}
           {upcomingForDay.map((a) => (
             <View key={a.id} style={styles.slotWrap}>
-              <View style={[styles.slot, styles.bookedSlot]}>
+              <TouchableOpacity
+                style={[styles.slot, styles.bookedSlot]}
+                activeOpacity={0.7}
+                onPress={() => showBookingPopup(a)}
+                accessibilityLabel={`Booking with ${a.customer_name} at ${a.start_time.slice(0, 5)}. Tap for details`}
+              >
                 <Ionicons name="calendar-outline" size={18} color={colors.blue} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.slotText}>
@@ -737,7 +743,7 @@ export default function CalendarCreator() {
                     </TouchableOpacity>
                   )}
                 </View>
-              </View>
+              </TouchableOpacity>
               <View style={styles.slotActions}>
                 {/* Save to Apple/Google Calendar (not for days that have passed) */}
                 {a.status === 'confirmed' && a.appointment_date >= todayKey && (
@@ -856,15 +862,6 @@ export default function CalendarCreator() {
 const styles = StyleSheet.create({
   monthButton: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.pinkTint },
   container: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  title: { fontSize: 20 },
-  headerSide: { flex: 1 }, // up and to the right of the date/time // service · person
   slotsHeader: {
     flexDirection: 'row',
     alignItems: 'center',

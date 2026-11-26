@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Switch, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
+import { TextInput } from '../../../components/AppTextInput';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../../../components/AppText';
 import { Card, Chips, EditScreen, editErrorMessage } from '../../../components/EditKit';

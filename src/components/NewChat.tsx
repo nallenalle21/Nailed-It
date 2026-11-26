@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, Keyboard, Modal, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Keyboard, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TextInput } from './AppTextInput';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';

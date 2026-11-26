@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
 import StarredTitle from '../../../components/StarredTitle';
 import { colors, fonts } from '../../../theme';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, TextInput, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, ActivityIndicator, RefreshControl } from 'react-native';
+import { Text } from '../../../components/AppText';
+import { TextInput } from '../../../components/AppTextInput';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 // Adjust the path below if your supabase.ts is located elsewhere:

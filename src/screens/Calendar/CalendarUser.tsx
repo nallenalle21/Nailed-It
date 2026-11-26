@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ComponentRef } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
-import StarredTitle from '../../components/StarredTitle';
+import PageHeader from '../../components/PageHeader';
 import { handle } from '../../utils/handle';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, fonts } from '../../theme';
@@ -187,22 +187,22 @@ export default function CalendarUser() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        {/* Week view: ← back to the month (Details) */}
-        <View style={styles.headerSide}>
-          {view === 'week' && (
-            // Not a chevron (those step through days): a "Month" button with a grid icon
-            <TouchableOpacity style={styles.monthButton} onPress={() => chooseView('details')} hitSlop={8} accessibilityLabel="Back to month">
-              <Ionicons name="arrow-back" size={16} color={colors.wine} />
-              <Ionicons name="grid-outline" size={15} color={colors.wine} />
-            </TouchableOpacity>
-          )}
-        </View>
-        <StarredTitle style={styles.title} star={false}>Calendar</StarredTitle>
-        <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-          <ViewMenu view={view} onChange={chooseView} />
-        </View>
-      </View>
+      <PageHeader
+        title="Calendar"
+        left={
+          <>
+            {/* Week view: ← back to the month (Details) */}
+            {view === 'week' && (
+              // Not a chevron (those step through days): a "Month" button with a grid icon
+              <TouchableOpacity style={styles.monthButton} onPress={() => chooseView('details')} hitSlop={8} accessibilityLabel="Back to month">
+                <Ionicons name="arrow-back" size={16} color={colors.wine} />
+                <Ionicons name="grid-outline" size={15} color={colors.wine} />
+              </TouchableOpacity>
+            )}
+          </>
+        }
+        right={<ViewMenu view={view} onChange={chooseView} />}
+      />
 
       {/* Week view: the week's days + the chosen day's date stay at the top; that one day, large, below */}
       {view === 'week' && (
@@ -361,15 +361,6 @@ export default function CalendarUser() {
 const styles = StyleSheet.create({
   monthButton: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.pinkTint },
   container: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  title: { fontSize: 20 },
-  headerSide: { flex: 1 },
   slotsHeader: {
     paddingHorizontal: 16,
     paddingTop: 16,

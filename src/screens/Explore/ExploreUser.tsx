@@ -9,6 +9,8 @@ import PriceRangeSlider from '../../components/PriceRangeSlider';
 import { HIDDEN_SPINNER, RefreshStar } from '../../components/SparkleStars';
 import BookingModal from '../../components/BookingModal';
 import ExploreSearch from '../../components/ExploreSearch';
+import PageHeader from '../../components/PageHeader';
+import { SERVICES, getExplorePrefs } from '../../services/explorePrefs';
 import CreatorPopup from '../../components/CreatorPopup';
 import BookView from '../../components/BookView';
 import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
@@ -42,18 +44,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Circle, Marker } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
-const SERVICES = [
-  'Simple nail art',
-  'Advanced nail art',
-  'Gel nails',
-  'Acrylic nails',
-  'Manicure',
-  'Pedicure',
-];
 
 // Custom burgundy pin with light pink dot (assets/images/map-pin@2x/@3x.png for sharp screens).
 const MAP_PIN = require('../../../assets/images/map-pin.png');
@@ -91,6 +85,11 @@ function demoCoordinate(id: string) {
     longitude: STOCKHOLM.longitude + ((((h >>> 10) % 1000) / 1000) - 0.5) * 0.1,
   };
 }
+
+// Find Service map: studios are shown as a 200 m circle once zoomed in this far (latitude span),
+// around a point that's been moved a little from the address (see supabase/approximate_location.sql).
+const APPROX_RADIUS_M = 200;
+const SHOW_AREA_BELOW_DELTA = 0.03;
 
 const STOCKHOLM = {
   latitude: 59.3293,
@@ -218,6 +217,10 @@ export default function ExploreUser({ navigation }: any) {
     FILTER_MIN_BODY, // Android has no inline calendar: the service list is the biggest page there
   );
   const [filterMenu, setFilterMenu] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false); // search bar shown (header search icon)
+  // Find Service map: approximate studio points (never the address) and whether we're zoomed in.
+  const [approxPoints, setApproxPoints] = useState<Record<string, { latitude: number; longitude: number }>>({});
+  const [mapZoomedIn, setMapZoomedIn] = useState(false);
   // "Sort by" in the filter menu: each tab has its own (Book: nail techs, Feed: photos).
   const [sort, setSort] = useState<BookSort>('next');
   const [feedSort, setFeedSort] = useState<FeedSort>('newest');
@@ -343,6 +346,41 @@ export default function ExploreUser({ navigation }: any) {
       params: { vendorId, from: 'Explore' }, // the profile's back goes back here (to the open photo)
     });
   }, [navigation]);
+
+  // Approximate studio points for the map. Missing until supabase/approximate_location.sql has run:
+  // then the map simply keeps the area pins.
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    supabase.from('profiles')
+      .select('id, approx_lat, approx_lng')
+      .eq('role', 'creator')
+      .eq('is_live', true)
+      .not('approx_lat', 'is', null)
+      .then(({ data, error }) => {
+        if (!active || error || !data) return;
+        const points: Record<string, { latitude: number; longitude: number }> = {};
+        for (const r of data as { id: string; approx_lat: number; approx_lng: number }[]) {
+          points[r.id] = { latitude: r.approx_lat, longitude: r.approx_lng };
+        }
+        setApproxPoints(points);
+      });
+    return () => { active = false; };
+  }, []));
+
+  // Explore preferences (Settings): always-on service filter and the tab Explore opens on.
+  // Applied whenever they change; filters picked by hand stay until then.
+  const appliedPrefs = useRef<string | null>(null);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    getExplorePrefs().then((prefs) => {
+      const key = JSON.stringify(prefs);
+      if (!active || appliedPrefs.current === key) return;
+      appliedPrefs.current = key;
+      setServices(prefs.services);
+      setMode(prefs.startIn);
+    });
+    return () => { active = false; };
+  }, []));
 
   const changeMode = (next: 'inspire' | 'book') => {
     setMode(next);
@@ -576,6 +614,36 @@ export default function ExploreUser({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* Title in the middle (changes with Feed/Book), search + filters on the right */}
+      <PageHeader
+        left={mode === 'inspire' && (
+          <TouchableOpacity style={styles.headerButton} onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
+            <Ionicons name="refresh" size={21} color={colors.blue} />
+          </TouchableOpacity>
+        )}
+        title={mode === 'book' ? (
+          <View style={styles.starTitle}>
+            <Image source={require('../../../assets/images/star.png')} style={styles.star} />
+            <Text style={styles.sectionTitle}>Find Service</Text>
+          </View>
+        ) : (
+          <View style={styles.starTitle}>
+            <Image source={require('../../../assets/images/star.png')} style={styles.star} />
+            <Text style={styles.sectionTitle}>get inspired</Text>
+          </View>
+        )}
+        right={
+          <>
+            <TouchableOpacity style={styles.headerButton} onPress={() => setSearchOpen(true)} accessibilityLabel="Search usernames">
+              <Ionicons name="search" size={21} color={colors.blue} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerButton} onPress={() => setFilterMenu(true)} accessibilityLabel="Filter by service, price and date">
+              <Ionicons name="options-outline" size={22} color={colors.blue} />
+              {filtersActive ? <View style={styles.filterDot} /> : null}
+            </TouchableOpacity>
+          </>
+        }
+      />
       {/* Wrapper so the drag overlay can sit on top of the scroll content */}
       <View
         ref={overlayRef}
@@ -604,22 +672,14 @@ export default function ExploreUser({ navigation }: any) {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 32 }}
         >
-          {/* PART 1: search (people, Instagram-style) + filters */}
+          {/* PART 1: search (people, Instagram-style), opened from the header's search icon */}
           <ExploreSearch
             feedQuery={feedQuery}
             onFeedQueryChange={setFeedQuery}
             onOpenProfile={goToProfile}
             placeholder="search usernames"
-            accessory={(
-              <TouchableOpacity
-                style={styles.filterButton}
-                onPress={() => setFilterMenu(true)}
-                accessibilityLabel="Filter by service, price and date"
-              >
-                <Ionicons name="options-outline" size={22} color={colors.blue} />
-                {filtersActive ? <View style={styles.filterDot} /> : null}
-              </TouchableOpacity>
-            )}
+            open={searchOpen}
+            onClose={() => setSearchOpen(false)}
           >
             {/* Inspiration feed or booking: the two ways to use Explore */}
             <View style={styles.modeToggle}>
@@ -639,12 +699,6 @@ export default function ExploreUser({ navigation }: any) {
 
             {mode === 'book' ? (
               <>
-                <View style={styles.mapHeader}>
-                  <View style={styles.starTitle}>
-                    <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
-                    <Text style={styles.sectionTitle}>find your services</Text>
-                  </View>
-                </View>
                 <BookView
                   photosByCreator={photosByCreator}
                   services={services}
@@ -656,11 +710,30 @@ export default function ExploreUser({ navigation }: any) {
                   onOpenProfile={goToProfile}
                   onSidewaysTouch={blockTabSwipe}
                   renderMap={(list) => (
-                    <MapView style={styles.map} initialRegion={STOCKHOLM}>
+                    <MapView
+                      style={styles.map}
+                      initialRegion={STOCKHOLM}
+                      onRegionChangeComplete={(r) => setMapZoomedIn(r.latitudeDelta < SHOW_AREA_BELOW_DELTA)}
+                    >
+                      {/* Studios: an approximate 200 m area when zoomed in, never the exact address.
+                          Mobile-only nail techs keep the pin in their area (customers don't go to them). */}
+                      {list.map((c) => {
+                        const approx = c.workplaceTypes.some((w) => w !== 'mobile') ? approxPoints[c.id] : undefined;
+                        return approx && mapZoomedIn ? (
+                          <Circle
+                            key={`${c.id}-area`}
+                            center={approx}
+                            radius={APPROX_RADIUS_M}
+                            fillColor="rgba(250,137,171,0.22)"
+                            strokeColor="rgba(140,41,46,0.35)"
+                            strokeWidth={1}
+                          />
+                        ) : null;
+                      })}
                       {list.map((c) => (
                         <Marker
                           key={c.id}
-                          coordinate={c.areaPoint ?? demoCoordinate(c.id)}
+                          coordinate={(c.workplaceTypes.some((w) => w !== 'mobile') ? approxPoints[c.id] : undefined) ?? c.areaPoint ?? demoCoordinate(c.id)}
                           // Tap a pin: the bubble (name · area · from X kr). Tap the bubble: their profile.
                           title={c.displayName}
                           description={[c.city, c.fromPrice !== null ? `from ${formatKr(c.fromPrice)}` : null].filter(Boolean).join(' · ')}
@@ -677,15 +750,6 @@ export default function ExploreUser({ navigation }: any) {
               </>
             ) : <>
             {/* PART 2: real artwork feed */}
-            <View style={styles.feedHeading}>
-              <View style={styles.starTitle}>
-                <Image source={require('../../../assets/images/star.png')} style={styles.star} />
-                <Text style={styles.sectionTitle}>get inspired</Text>
-              </View>
-              <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
-                <Ionicons name="refresh" size={21} color={colors.blue} />
-              </TouchableOpacity>
-            </View>
             {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
             {feedError ? (
               <View style={styles.feedStatus}>
@@ -1073,21 +1137,13 @@ const styles = StyleSheet.create({
   modeOptionActive: { backgroundColor: colors.pink },
   modeText: { fontSize: 14, fontWeight: '600', color: colors.ink },
   modeTextActive: { color: colors.wine, fontWeight: '700' },
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 12 },
-  filterButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#f2f2f2', alignItems: 'center', justifyContent: 'center' },
-  filterDot: { position: 'absolute', top: 10, right: 11, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },
+  // Search / filter / refresh icons in the page header (same height as the calendar's view button)
+  headerButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  filterDot: { position: 'absolute', top: 4, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },
   filterMenuLabel: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   filterMenuAny: { color: '#888' },
   clearFilters: { alignSelf: 'flex-start', paddingTop: 14 },
   clearFiltersText: { color: colors.ink, fontSize: 15, fontWeight: '600' },
-  mapHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 10,
-  },
   sectionTitle: { fontSize: 20, fontFamily: fonts.title, color: colors.ink },
   mapWrap: { marginHorizontal: 16, borderRadius: 16, overflow: 'hidden', height: 280 },
   map: { flex: 1 },
@@ -1096,11 +1152,9 @@ const styles = StyleSheet.create({
   feedCol: { flex: 1, gap: 8 },
   tile: { borderRadius: 14, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   tileImage: { width: '100%', height: '100%' },
-  feedHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 16, marginTop: 16 },
   starTitle: { position: 'relative' },
   // sits at the lower-left of the "g" in "get inspired", partly tucked behind it
   star: { position: 'absolute', width: 44, height: 44, left: -12, top: -21.5 },
-  starsDouble: { position: 'absolute', width: 48, height: 47, right: -30, top: -22 },
   feedNotice: { color: colors.ink, fontSize: 13, marginHorizontal: 16, marginTop: 10 },
   feedStatus: { marginHorizontal: 16, marginTop: 15, padding: 16, backgroundColor: '#FFF1F4', borderRadius: 12 },
   feedError: { color: '#A12339', fontSize: 13, lineHeight: 19 },

@@ -1,16 +1,6 @@
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TextInput } from './AppTextInput';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -53,7 +43,7 @@ export default function OfferComposerModal({ chatId, creatorId, customerName, on
   const [duration, setDuration] = useState(60);
   const [place, setPlace] = useState('');
   const [price, setPrice] = useState('');
-  const [androidPicker, setAndroidPicker] = useState<'date' | 'time' | null>(null);
+  const [picker, setPicker] = useState<'date' | 'time' | null>(null); // open date/time picker
   const [sending, setSending] = useState(false);
 
   // Start from the studio address in Work Locations (still editable), unless they already typed one.
@@ -140,39 +130,53 @@ export default function OfferComposerModal({ chatId, creatorId, customerName, on
           />
 
           <Text style={styles.sectionText}>date and start time</Text>
-          {Platform.OS === 'ios' ? (
-            <View style={styles.pickerRow}>
-              <DateTimePicker value={when} mode="date" display="compact" minimumDate={new Date()} accentColor={colors.blue}
-                onChange={(_, d) => d && pickDate(d)} />
-              <DateTimePicker value={when} mode="time" display="compact" minuteInterval={5} accentColor={colors.blue}
-                onChange={(_, d) => d && pickTime(d)} />
+          {/* Our own buttons (Glacial Indifference). Tap one: the phone's calendar / time scroller
+              opens (below the buttons on iPhone, as a dialog on Android). */}
+          <View style={styles.pickerRow}>
+            <TouchableOpacity
+              style={[styles.pickerButton, picker === 'date' && styles.pickerButtonOpen]}
+              onPress={() => setPicker((p) => (p === 'date' ? null : 'date'))}
+              accessibilityLabel="Choose date"
+            >
+              <Ionicons name="calendar-outline" size={18} color={colors.ink} />
+              <Text style={styles.pickerText}>
+                {when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.pickerButton, picker === 'time' && styles.pickerButtonOpen]}
+              onPress={() => setPicker((p) => (p === 'time' ? null : 'time'))}
+              accessibilityLabel="Choose start time"
+            >
+              <Ionicons name="time-outline" size={18} color={colors.ink} />
+              <Text style={styles.pickerText}>{toTime(startMinutes)}</Text>
+            </TouchableOpacity>
+          </View>
+          {picker && Platform.OS === 'ios' && (
+            <View style={styles.iosPicker}>
+              <DateTimePicker
+                value={when}
+                mode={picker}
+                display={picker === 'date' ? 'inline' : 'spinner'}
+                minimumDate={picker === 'date' ? new Date() : undefined}
+                minuteInterval={5}
+                accentColor={colors.blue}
+                onChange={(_, d) => d && (picker === 'date' ? pickDate : pickTime)(d)}
+              />
             </View>
-          ) : (
-            <View style={styles.pickerRow}>
-              <TouchableOpacity style={styles.pickerButton} onPress={() => setAndroidPicker('date')}>
-                <Ionicons name="calendar-outline" size={18} color={colors.ink} />
-                <Text style={styles.pickerText}>
-                  {when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.pickerButton} onPress={() => setAndroidPicker('time')}>
-                <Ionicons name="time-outline" size={18} color={colors.ink} />
-                <Text style={styles.pickerText}>{toTime(startMinutes)}</Text>
-              </TouchableOpacity>
-              {androidPicker && (
-                <DateTimePicker
-                  value={when}
-                  mode={androidPicker}
-                  is24Hour
-                  minimumDate={androidPicker === 'date' ? new Date() : undefined}
-                  onChange={(e, d) => {
-                    const which = androidPicker;
-                    setAndroidPicker(null);
-                    if (e.type === 'set' && d) (which === 'date' ? pickDate : pickTime)(d);
-                  }}
-                />
-              )}
-            </View>
+          )}
+          {picker && Platform.OS !== 'ios' && (
+            <DateTimePicker
+              value={when}
+              mode={picker}
+              is24Hour
+              minimumDate={picker === 'date' ? new Date() : undefined}
+              onChange={(e, d) => {
+                const which = picker;
+                setPicker(null);
+                if (e.type === 'set' && d) (which === 'date' ? pickDate : pickTime)(d);
+              }}
+            />
           )}
 
           <Text style={styles.sectionText}>length</Text>
@@ -229,7 +233,7 @@ export default function OfferComposerModal({ chatId, creatorId, customerName, on
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: Platform.OS === 'android' ? 12 : 4, paddingBottom: 10 },
   close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 15, fontFamily: fonts.title, color: colors.ink, flex: 1, textAlign: 'center' },
@@ -238,7 +242,9 @@ const styles = StyleSheet.create({
   multiline: { minHeight: 70, textAlignVertical: 'top' },
   pickerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16 },
   pickerButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: '#ddd' },
+  pickerButtonOpen: { borderColor: colors.blue },
   pickerText: { fontSize: 15, color: colors.ink, fontWeight: '500' },
+  iosPicker: { marginHorizontal: 16, marginTop: 8, alignItems: 'center' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16 },
   chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff' },
   chipActive: { backgroundColor: colors.pink, borderColor: colors.pink },

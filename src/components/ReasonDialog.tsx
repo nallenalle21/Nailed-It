@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Modal, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TextInput } from './AppTextInput';
 import { Text } from './AppText';
 import { colors, fonts } from '../theme';
 

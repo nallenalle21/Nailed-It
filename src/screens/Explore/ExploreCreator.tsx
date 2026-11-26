@@ -6,6 +6,7 @@ import { supabase } from '../../services/supabase';
 import { publicPostUrl, type VendorPost } from '../../services/vendorPortfolio';
 import SaveToBoardModal from '../../components/SaveToBoardModal';
 import ExploreSearch from '../../components/ExploreSearch';
+import PageHeader from '../../components/PageHeader';
 import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
 import { fetchCreatorsAvailableOn, toDateKey } from '../../services/booking';
 import {
@@ -175,6 +176,7 @@ export default function ExploreCreator({ navigation }: any) {
     FILTER_MIN_BODY, // Android has no inline calendar: the service list is the biggest page there
   );
   const [filterMenu, setFilterMenu] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false); // search bar shown (header search icon)
   // "Sort by" in the filter menu: each tab has its own (Book: nail techs, Feed: photos).
   const [sort, setSort] = useState<BookSort>('next');
   const [feedSort, setFeedSort] = useState<FeedSort>('newest');
@@ -498,6 +500,31 @@ export default function ExploreCreator({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* Title in the middle, search + filters on the right */}
+      <PageHeader
+        left={
+          <TouchableOpacity style={styles.headerButton} onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
+            <Ionicons name="refresh" size={21} color={colors.blue} />
+          </TouchableOpacity>
+        }
+        title={
+          <View style={styles.starTitle}>
+            <Image source={require('../../../assets/images/star.png')} style={styles.star} />
+            <Text style={styles.sectionTitle}>get inspired</Text>
+          </View>
+        }
+        right={
+          <>
+            <TouchableOpacity style={styles.headerButton} onPress={() => setSearchOpen(true)} accessibilityLabel="Search usernames">
+              <Ionicons name="search" size={21} color={colors.blue} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerButton} onPress={() => setFilterMenu(true)} accessibilityLabel="Filter by service, price and date">
+              <Ionicons name="options-outline" size={22} color={colors.blue} />
+              {filtersActive ? <View style={styles.filterDot} /> : null}
+            </TouchableOpacity>
+          </>
+        }
+      />
       {/* Wrapper so the drag overlay can sit on top of the scroll content */}
       <View
         ref={overlayRef}
@@ -523,34 +550,17 @@ export default function ExploreCreator({ navigation }: any) {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 32 }}
         >
-          {/* PART 1: search (people, Instagram-style) + filters */}
+          {/* PART 1: search (people, Instagram-style), opened from the header's search icon */}
           <ExploreSearch
             feedQuery={feedQuery}
             onFeedQueryChange={setFeedQuery}
             onOpenProfile={goToProfile}
             placeholder="search usernames"
-            accessory={(
-              <TouchableOpacity
-                style={styles.filterButton}
-                onPress={() => setFilterMenu(true)}
-                accessibilityLabel="Filter by service, price and date"
-              >
-                <Ionicons name="options-outline" size={22} color={colors.blue} />
-                {filtersActive ? <View style={styles.filterDot} /> : null}
-              </TouchableOpacity>
-            )}
+            open={searchOpen}
+            onClose={() => setSearchOpen(false)}
           >
             <>
             {/* PART 2: real artwork feed */}
-            <View style={styles.feedHeading}>
-              <View style={styles.starTitle}>
-                <Image source={require('../../../assets/images/star.png')} style={styles.star} />
-                <Text style={styles.sectionTitle}>get inspired</Text>
-              </View>
-              <TouchableOpacity onPress={() => setFeedRefresh(n => n + 1)} accessibilityLabel="Refresh creator photos">
-                <Ionicons name="refresh" size={21} color={colors.blue} />
-              </TouchableOpacity>
-            </View>
             {feedWarning && <Text style={styles.feedNotice}>{feedWarning}</Text>}
             {feedError ? (
               <View style={styles.feedStatus}>
@@ -915,21 +925,13 @@ const styles = StyleSheet.create({
   modeOptionActive: { backgroundColor: colors.pink },
   modeText: { fontSize: 14, fontWeight: '600', color: colors.ink },
   modeTextActive: { color: colors.wine, fontWeight: '700' },
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 12 },
-  filterButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#f2f2f2', alignItems: 'center', justifyContent: 'center' },
-  filterDot: { position: 'absolute', top: 10, right: 11, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },
+  // Search / filter / refresh icons in the page header (same height as the calendar's view button)
+  headerButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  filterDot: { position: 'absolute', top: 4, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },
   filterMenuLabel: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   filterMenuAny: { color: '#888' },
   clearFilters: { alignSelf: 'flex-start', paddingTop: 14 },
   clearFiltersText: { color: colors.ink, fontSize: 15, fontWeight: '600' },
-  mapHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 10,
-  },
   sectionTitle: { fontSize: 20, fontFamily: fonts.title, color: colors.ink },
   mapWrap: { marginHorizontal: 16, borderRadius: 16, overflow: 'hidden', height: 280 },
   map: { flex: 1 },
@@ -938,7 +940,6 @@ const styles = StyleSheet.create({
   feedCol: { flex: 1, gap: 8 },
   tile: { borderRadius: 14, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   tileImage: { width: '100%', height: '100%' },
-  feedHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 16, marginTop: 16 },
   starTitle: { position: 'relative' },
   // sits at the lower-left of the "g" in "get inspired", partly tucked behind it
   star: { position: 'absolute', width: 44, height: 44, left: -12, top: -21.5 },

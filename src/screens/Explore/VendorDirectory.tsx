@@ -17,11 +17,12 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabase';
+import { colors } from '../../theme';
 
 type Vendor = { id: string; username: string | null };
 
 const theme = {
-  background: '#FCFAFB',
+  background: colors.background,
   ink: '#271D2B',
   muted: '#786B7A',
   accent: '#853A57',

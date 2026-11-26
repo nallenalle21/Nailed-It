@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { colors, fonts } from '../../theme';
 import { handle } from '../../utils/handle';
-import { View, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
+import { View, Image, StyleSheet, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
+import { TextInput } from '../../components/AppTextInput';
 import { Text } from '../../components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { getVendorAvatarUrl } from '../../services/vendorAvatar';
 import { formatKr } from '../../services/booking';
 import { fetchChatOffers, offerEndTime, respondToOffer, withdrawOffer, type BookingOffer } from '../../services/offers';
 import { addAppointmentToCalendar } from '../../services/deviceCalendar';
@@ -36,6 +38,22 @@ export default function ChatRoom({ route, navigation }: any) {
   const [offers, setOffers] = useState<Record<string, BookingOffer>>({});
   const [composerOpen, setComposerOpen] = useState(false);
   const [busyOfferId, setBusyOfferId] = useState<string | null>(null);
+
+  // The other person in the chat (chat ids are "<id>_<id>") and their profile picture.
+  const otherId = currentUserId ? String(chatId).split('_').find((id: string) => id !== currentUserId) ?? null : null;
+  const [otherPhoto, setOtherPhoto] = useState<string | null>(null);
+  useEffect(() => {
+    if (!otherId) return;
+    let active = true;
+    getVendorAvatarUrl(otherId).then((uri) => active && setOtherPhoto(uri)).catch(() => {});
+    return () => { active = false; };
+  }, [otherId]);
+
+  const openOtherProfile = () => {
+    if (!otherId) return;
+    if (role === 'creator') navigation.navigate('CustomerProfile', { customerId: otherId, customerName, chatId });
+    else navigation.navigate('VendorProfile', { vendorId: otherId });
+  };
 
   const fetchOffers = useCallback(async () => {
     try {
@@ -214,32 +232,23 @@ export default function ChatRoom({ route, navigation }: any) {
           <Ionicons name="arrow-back" size={24} color={colors.ink} />
         </TouchableOpacity>
 
-        <View style={styles.titleContainer}>
-          <Text style={styles.headerTitle}>{handle(customerName)}</Text>
-
-          {/* Profil-ikonen visas nu för BÅDA, men leder till olika sidor beroende på roll */}
-          <TouchableOpacity
-            style={styles.profileBtn}
-            onPress={() => {
-              if (role === 'creator') {
-                navigation.navigate('CustomerProfile', {
-                  customerName: customerName,
-                  chatId: chatId
-                });
-              } else {
-                // Om kunden klickar: Utvinn företagets ID från chatId och gå till VendorProfile
-                const ids = chatId.split('_');
-                const vendorId = ids.find((id: string) => id !== currentUserId);
-
-                navigation.navigate('VendorProfile', {
-                  vendorId: vendorId
-                });
-              }
-            }}
-          >
-            <Ionicons name="person-circle-outline" size={22} color={colors.blue} />
-          </TouchableOpacity>
-        </View>
+        {/* The other person: photo left of the name; tap to open their profile */}
+        <TouchableOpacity
+          style={styles.titleContainer}
+          onPress={openOtherProfile}
+          disabled={!otherId}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${handle(customerName)}'s profile`}
+        >
+          {otherPhoto ? (
+            <Image source={{ uri: otherPhoto }} style={styles.headerAvatar} />
+          ) : (
+            <View style={[styles.headerAvatar, styles.headerAvatarEmpty]}>
+              <Text style={styles.headerAvatarInitial}>{String(customerName ?? '?').charAt(0).toUpperCase()}</Text>
+            </View>
+          )}
+          <Text style={styles.headerTitle} numberOfLines={1}>{handle(customerName)}</Text>
+        </TouchableOpacity>
 
         {/* Skapar balans i headern */}
         <View style={{ width: 34 }} />
@@ -325,9 +334,11 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.line,
   },
   backBtn: { padding: 5 },
-  titleContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerTitle: { fontSize: 18, color: colors.ink, fontFamily: fonts.title },
-  profileBtn: { padding: 2 },
+  titleContainer: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
+  headerTitle: { fontSize: 18, color: colors.ink, fontFamily: fonts.title, flexShrink: 1 },
+  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.line },
+  headerAvatarEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.pink },
+  headerAvatarInitial: { fontSize: 15, fontWeight: '700', color: colors.wine },
   chatContainer: { padding: 20, paddingBottom: 40 },
   messageBubble: { maxWidth: '80%', padding: 12, borderRadius: 16, marginBottom: 12 },
   myMessage: { alignSelf: 'flex-end', backgroundColor: colors.blue, borderBottomRightRadius: 4 },

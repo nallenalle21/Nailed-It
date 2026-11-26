@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
 import StarredTitle from '../../../components/StarredTitle';
 import { colors, fonts } from '../../../theme';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { Text } from '../../../components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function Bookkeeping({ navigation }: any) {

@@ -1,4 +1,4 @@
-import { Text as RNText, TextProps, StyleSheet, Platform } from 'react-native';
+import { Text as RNText, TextProps, StyleSheet } from 'react-native';
 import { colors, fonts } from '../theme';
 
 const BOLD = ['bold', '600', '700', '800', '900', 600, 700, 800, 900];
@@ -17,8 +17,8 @@ export function Text({ style, ...props }: TextProps) {
           color: colors.text,
         },
         style,
-        // iOS picks bold from the font name, so reset the weight to avoid double-bolding
-        isBold && Platform.OS === 'ios' ? { fontWeight: 'normal' } : null,
+        // Bold comes from the font file itself, so reset the weight to avoid faux double-bolding
+        isBold ? { fontWeight: 'normal' } : null,
       ]}
     />
   );

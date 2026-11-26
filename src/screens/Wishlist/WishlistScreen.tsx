@@ -1,15 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { handle } from '../../utils/handle';
-import {
-  ActivityIndicator, Alert, Animated, findNodeHandle, Image, Modal, PanResponder, RefreshControl, ScrollView, StyleSheet,
-  TextInput, TouchableOpacity, View, type GestureResponderEvent,
-} from 'react-native';
+import { ActivityIndicator, Alert, Animated, findNodeHandle, Image, Modal, PanResponder, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View, type GestureResponderEvent } from 'react-native';
+import { TextInput } from '../../components/AppTextInput';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
-import { setStatusBarStyle } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../../components/AppText';
+import PageHeader, { PAGE_TITLE_SIZE } from '../../components/PageHeader';
 import PhotoBookSheet, { type SheetPhoto } from '../../components/PhotoBookSheet';
 import BookingModal from '../../components/BookingModal';
 import { useIsFreelancer } from '../../services/myRole';
@@ -63,7 +61,7 @@ function BoardCover({ entries }: { entries: WishlistEntry[] }) {
         </View>
       )) : (
         <View style={styles.emptyCover}>
-          <Ionicons name="images-outline" size={36} color={colors.wine} />
+          <Ionicons name="images-outline" size={36} color={colors.pink} />
           <Text style={styles.emptyCoverText}>your saved finds</Text>
         </View>
       )}
@@ -130,9 +128,6 @@ export default function WishlistScreen({ navigation }: any) {
 
   useFocusEffect(useCallback(() => {
     void reload();
-    // Light clock/battery icons on the burgundy page; back to dark when leaving the tab.
-    setStatusBarStyle('light');
-    return () => setStatusBarStyle('dark');
   }, [reload]));
 
   const selectedBoard = boards.find(b => b.id === selectedBoardId) ?? null;
@@ -331,29 +326,24 @@ export default function WishlistScreen({ navigation }: any) {
     >
       {/* Rare decorative stars (pop-ups + shooting stars) on the main page and inside collections; paused when you leave the tab */}
       <SparkleStars ref={sparkles} active={isFocused} />
-      <View ref={headerRef} style={styles.header}>
-        <View style={styles.headerTitleGroup}>
-          {selectedBoard && (
-            <TouchableOpacity onPress={() => { setSelectedBoardId(null); setEditing(false); }} accessibilityLabel="Back to boards" style={styles.back}>
-              <Ionicons name="arrow-back" size={23} color={colors.background} />
-            </TouchableOpacity>
-          )}
-          {selectedBoard ? (
-            <Text style={styles.title} numberOfLines={1}>{selectedBoard.name}</Text>
-          ) : (
-            <View style={styles.starTitle}>
-              <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
-              <Image source={require('../../../assets/images/star.png')} style={styles.starN} />
-              <Image source={require('../../../assets/images/star.png')} style={styles.starTiny} />
-              <Text style={[styles.title, styles.titleCaps]}>Inspiration</Text>
-            </View>
-          )}
-        </View>
-      </View>
-      {selectedBoard ? (
+      <PageHeader
+        ref={headerRef}
+        left={selectedBoard && (
+          <TouchableOpacity onPress={() => { setSelectedBoardId(null); setEditing(false); }} accessibilityLabel="Back to boards" style={styles.back}>
+            <Ionicons name="arrow-back" size={23} color={colors.ink} />
+          </TouchableOpacity>
+        )}
+        title={selectedBoard ? selectedBoard.name : (
+          <View style={styles.starTitle}>
+            <Image source={require('../../../assets/images/stars-double.png')} style={styles.starsDouble} />
+            <Image source={require('../../../assets/images/star.png')} style={styles.starN} />
+            <Image source={require('../../../assets/images/star.png')} style={styles.starTiny} />
+            <Text style={styles.title}>Inspiration</Text>
+          </View>
+        )}
+      />
+      {selectedBoard && (
         <Text style={styles.subtitle}>{boardEntries.length} saved {boardEntries.length === 1 ? 'item' : 'items'}</Text>
-      ) : (
-        <View style={styles.titleSpacer} />
       )}
       <ScrollView
         ref={scrollRef}
@@ -366,7 +356,7 @@ export default function WishlistScreen({ navigation }: any) {
       >
         {/* Fills the whole scroll area so taps on empty space count as background */}
         <View ref={contentRef} style={{ flexGrow: 1 }}>
-        {loading && <ActivityIndicator size="large" color={colors.background} style={{ marginTop: 45 }} />}
+        {loading && <ActivityIndicator size="large" color={colors.ink} style={{ marginTop: 45 }} />}
         {!loading && !selectedBoard && (
           <View ref={cardsRef} style={styles.cards}>
             {boards.map(board => {
@@ -400,7 +390,7 @@ export default function WishlistScreen({ navigation }: any) {
         {!loading && selectedBoard && (
           boardEntries.length === 0 ? (
             <View ref={emptyRef} style={styles.emptyState}>
-              <Ionicons name="heart-outline" size={36} color={colors.background} />
+              <Ionicons name="heart-outline" size={36} color={colors.ink} />
               <Text style={styles.emptyText}>Nothing saved here yet.</Text>
               <Text style={styles.emptyHint}>Long-press photos in Explore or save creators on their public profiles.</Text>
             </View>
@@ -529,37 +519,33 @@ export default function WishlistScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.blueMuted }, // muted light blue; text on it is off-white
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, marginBottom: 12, paddingHorizontal: 18 },
-  headerTitleGroup: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  screen: { flex: 1, backgroundColor: colors.background },
   back: { padding: 5 },
-  title: { fontSize: 28, fontFamily: fonts.title, color: colors.blueDeep, textTransform: 'lowercase', flexShrink: 1 },
-  titleCaps: { textTransform: 'uppercase' },
+  title: { fontSize: PAGE_TITLE_SIZE, fontFamily: fonts.title, color: colors.ink, textTransform: 'uppercase' },
   starTitle: { position: 'relative' },
   // Double stars tucked behind the left side of INSPIRATION
-  starsDouble: { position: 'absolute', width: 48, height: 47, left: -14, top: -20 },
+  starsDouble: { position: 'absolute', width: 34, height: 34, left: -10, top: -14 },
   // Small star above the final N
-  starN: { position: 'absolute', width: 22, height: 22, left: 277, top: -12 },
+  starN: { position: 'absolute', width: 16, height: 16, left: 198, top: -9 },
   // Tiny star just to the right of the final N
-  starTiny: { position: 'absolute', width: 16, height: 16, left: 304, top: 0 },
+  starTiny: { position: 'absolute', width: 12, height: 12, left: 217, top: 0 },
   editButton: { position: 'absolute', left: 18, bottom: 18, backgroundColor: colors.pink, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
   editText: { fontSize: 12, color: colors.wine, fontWeight: '700', textTransform: 'lowercase' },
-  // Lines up under the collection name: 18 page margin + 33 back button (23 icon + 2×5 padding) + 8 gap
-  subtitle: { fontSize: 12, color: colors.background, marginTop: -8, marginLeft: 59, marginRight: 18, marginBottom: 16 },
-  titleSpacer: { height: 10 },
+  // Centred under the collection name, tucked into the header's bottom spacing
+  subtitle: { fontSize: 12, color: colors.inkMuted, textAlign: 'center', marginTop: -16, marginBottom: 16 },
   addTile: { height: 160, borderRadius: 18, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.pink, alignItems: 'center', justifyContent: 'center' },
   content: { flexGrow: 1, paddingHorizontal: 18, paddingBottom: 80 }, // room for the floating edit button
   cards: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 14 },
   boardCard: { width: '47.8%' },
-  // backgroundColor shows through the padding as an off-white frame around the photos
-  cover: { height: 160, borderRadius: 18, backgroundColor: colors.background, flexDirection: 'row', flexWrap: 'wrap', padding: 3, overflow: 'hidden' },
+  // backgroundColor shows through the padding as a dark frame around the photos
+  cover: { height: 160, borderRadius: 18, backgroundColor: colors.grey, flexDirection: 'row', flexWrap: 'wrap', padding: 3, overflow: 'hidden' },
   coverCell: { width: '50%', height: '50%', padding: 2, alignItems: 'center', justifyContent: 'center' }, // padding = small gap between photos
   coverPhoto: { width: '100%', height: '100%', borderRadius: 12 },
   emptyCover: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 7 },
-  emptyCoverText: { color: colors.wine, fontSize: 12 },
+  emptyCoverText: { color: colors.background, fontSize: 12 },
   boardMeta: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 6, marginTop: 9 },
-  boardName: { color: colors.background, fontSize: 13, fontFamily: fonts.title, flexShrink: 1 },
-  count: { color: colors.blueDeep, fontSize: 12 },
+  boardName: { color: colors.grey, fontSize: 13, fontFamily: fonts.title, flexShrink: 1 },
+  count: { color: colors.inkMuted, fontSize: 12 },
   savedCard: { width: '47.8%' },
   dragPlaceholder: { opacity: 0.25 },
   dragGhost: { position: 'absolute', left: 0, top: 0, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 8 },
@@ -567,10 +553,10 @@ const styles = StyleSheet.create({
   savedImage: { width: '100%', height: '100%' },
   profileTile: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F2E8ED' },
   removeBadge: { position: 'absolute', top: 6, right: 6, backgroundColor: '#FFF', borderRadius: 16 },
-  entryLabel: { marginTop: 7, fontSize: 14, fontWeight: '700', color: colors.background },
+  entryLabel: { marginTop: 7, fontSize: 14, fontWeight: '700', color: colors.ink },
   emptyState: { alignItems: 'center', marginTop: 80, paddingHorizontal: 34, gap: 10 },
-  emptyText: { fontSize: 17, fontWeight: '700', color: colors.background },
-  emptyHint: { fontSize: 13, color: colors.background, textAlign: 'center', lineHeight: 19 },
+  emptyText: { fontSize: 17, fontWeight: '700', color: colors.ink },
+  emptyHint: { fontSize: 13, color: colors.inkMuted, textAlign: 'center', lineHeight: 19 },
   menuBackdrop: { flex: 1, backgroundColor: 'rgba(24,20,22,0.45)', justifyContent: 'center', padding: 32 },
   menuSheet: { backgroundColor: colors.background, borderRadius: 20, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 8 },
   menuTitle: { fontFamily: fonts.title, fontSize: 18, color: colors.ink, marginBottom: 8 },

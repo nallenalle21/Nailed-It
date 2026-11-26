@@ -1,14 +1,7 @@
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  Modal,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-} from 'react-native';
+import { View, TouchableOpacity, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { Text } from './AppText';
+import { TextInput } from './AppTextInput';
 import { Ionicons } from '@expo/vector-icons';
 import { useWishlist } from '../context/WishlistContext';
 

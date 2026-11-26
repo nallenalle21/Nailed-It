@@ -1,18 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TextInput } from './AppTextInput';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
@@ -342,7 +330,7 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: Platform.OS === 'android' ? 12 : 4, paddingBottom: 10 },
   close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 15, fontFamily: fonts.title, color: colors.ink, flex: 1, textAlign: 'center' }, // shrinks further if a name is very long

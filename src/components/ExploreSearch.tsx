@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
-import { ActivityIndicator, Image, Keyboard, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Keyboard, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TextInput } from './AppTextInput';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './AppText';
 import { colors } from '../theme';
@@ -21,19 +22,22 @@ type Props = {
   onFeedQueryChange: (query: string) => void;
   onOpenProfile: (creatorId: string) => void;
   placeholder?: string;
-  /** Shown next to the search bar when not searching (the filter button). */
-  accessory?: ReactNode;
+  /** The bar is only shown once the search icon in the page header is tapped. */
+  open: boolean;
+  /** Called when the bar closes again (Cancel, picking a profile, "See photos for …"). */
+  onClose: () => void;
   /** The page itself (map, feed …): hidden while searching, like Instagram. */
   children: ReactNode;
 };
 
 /**
- * Instagram-style search for the Explore pages. Tapping the bar swaps the page for results:
+ * Instagram-style search for the Explore pages. The search icon in the header opens the bar
+ * (keyboard up right away) and swaps the page for results:
  * recent profiles at first, then matching freelancers that update with every letter. Tapping
  * one opens their profile; "See photos for …" filters the feed instead. The feed itself is
  * never filtered just by typing.
  */
-export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProfile, placeholder, accessory, children }: Props) {
+export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProfile, placeholder, open: barOpen, onClose, children }: Props) {
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const [query, setQuery] = useState(feedQuery);
   const [searching, setSearching] = useState(false);
@@ -69,6 +73,7 @@ export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProf
     Keyboard.dismiss();
     inputRef.current?.blur();
     setSearching(false);
+    onClose();
   };
 
   const cancel = () => {
@@ -96,6 +101,7 @@ export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProf
 
   return (
     <>
+      {barOpen && (
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={18} color={colors.blue} />
@@ -109,6 +115,7 @@ export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProf
             onFocus={() => setSearching(true)}
             onSubmitEditing={seePhotos}
             returnKeyType="search"
+            autoFocus
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -118,12 +125,11 @@ export default function ExploreSearch({ feedQuery, onFeedQueryChange, onOpenProf
             </TouchableOpacity>
           ) : null}
         </View>
-        {searching ? (
-          <TouchableOpacity onPress={cancel} hitSlop={8}>
-            <Text style={styles.cancel}>Cancel</Text>
-          </TouchableOpacity>
-        ) : accessory}
+        <TouchableOpacity onPress={cancel} hitSlop={8}>
+          <Text style={styles.cancel}>Cancel</Text>
+        </TouchableOpacity>
       </View>
+      )}
 
       {!searching ? (
         <>
@@ -204,7 +210,7 @@ function ResultRow({ creator: c, onPress, onRemove }: { creator: CreatorSearchRe
 }
 
 const styles = StyleSheet.create({
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 12 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginBottom: 12 },
   // Same look as the Explore search bar before
   searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, paddingHorizontal: 14, height: 46, borderRadius: 23, backgroundColor: '#f2f2f2' },
   searchInput: { flex: 1, fontSize: 16, color: colors.ink },

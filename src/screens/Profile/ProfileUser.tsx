@@ -1,22 +1,26 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
-import { StatsBox } from '../../components/ReviewsCertificatesBox';
-import { handle } from '../../utils/handle';
-import { colors, fonts } from '../../theme';
-import { Text } from '../../components/AppText';   // in src/components use './AppText'
-import { View, Image, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import PageHeader from '../../components/PageHeader';
+import { colors } from '../../theme';
+import { Text } from '../../components/AppText';
+import { StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { supabase } from '../../services/supabase';
 import { getVendorAvatarUrl, uploadVendorAvatar } from '../../services/vendorAvatar';
 import { fetchMyAppointments } from '../../services/booking';
 import { getWishlistBoards } from '../../services/wishlist';
+import { getMyAccount, type MyAccount } from '../../services/account';
+import CustomerProfileCard from '../../components/CustomerProfileCard';
 
-/** Customer's own profile: same look as the creator profile (avatar, HORIZON name, stats box). */
+/**
+ * Customer's own profile, Airbnb-style: one card with the photo, name, @username and
+ * location on the left and the numbers (bookings, collections, member since) on the right.
+ */
 export default function ProfileUser() {
   const navigation = useNavigation<any>();
-  const [profile, setProfile] = useState<any>(null);
+  const [account, setAccount] = useState<MyAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -25,14 +29,15 @@ export default function ProfileUser() {
 
   const fetchProfile = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-      setProfile({ ...data, city: user.user_metadata?.city ?? null });
+      const me = await getMyAccount();
+      if (!me) return;
+      setAccount(me);
       // Profile picture uses the same avatar storage as creators.
-      getVendorAvatarUrl(user.id).then(setPhotoUri).catch(() => setPhotoUri(null));
+      getVendorAvatarUrl(me.id).then(setPhotoUri).catch(() => setPhotoUri(null));
       fetchMyAppointments('customer').then(rows => setBookings(rows.length)).catch(() => setBookings(null));
       getWishlistBoards().then(boards => setCollections(boards.length)).catch(() => setCollections(null));
+    } catch (e) {
+      console.warn('[Profile] Could not load profile:', e);
     } finally {
       setLoading(false);
     }
@@ -41,11 +46,11 @@ export default function ProfileUser() {
   // Pull down to refresh: spinning star instead of the system spinner.
   const pull = useStarRefresh(() => fetchProfile());
 
-  // Reload when the tab is opened, so new bookings/collections are counted.
+  // Reload when the tab is opened (new bookings/collections, a changed name or username).
   useFocusEffect(useCallback(() => { void fetchProfile(); }, []));
 
   const handleUploadImage = async () => {
-    if (avatarBusy || !profile?.id) return;
+    if (avatarBusy || !account?.id) return;
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -57,7 +62,7 @@ export default function ProfileUser() {
       });
       if (result.canceled || result.assets.length === 0) return;
       setAvatarBusy(true);
-      setPhotoUri(await uploadVendorAvatar(profile.id, result.assets[0]));
+      setPhotoUri(await uploadVendorAvatar(account.id, result.assets[0]));
     } catch (caughtError) {
       Alert.alert('Could not upload profile picture', String(caughtError));
     } finally {
@@ -65,91 +70,70 @@ export default function ProfileUser() {
     }
   };
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-  };
+  const openAccount = () => navigation.navigate('AccountSettings');
+
+  const header = (
+    <PageHeader
+      title="My profile"
+      right={
+        <TouchableOpacity style={styles.settingsBtn} onPress={() => navigation.navigate('Settings')} hitSlop={10} accessibilityLabel="Settings">
+          <Ionicons name="settings-outline" size={24} color={colors.ink} />
+        </TouchableOpacity>
+      }
+    />
+  );
 
   if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.wine} />
-      </View>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {header}
+        <ActivityIndicator size="large" color={colors.wine} style={{ marginTop: 60 }} />
+      </SafeAreaView>
     );
   }
 
-  const displayName = profile?.username || 'Anonym';
 
   return (
-    <>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      {header}
       <ScrollView
         refreshControl={<RefreshControl {...pull.control} />}
-        style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <View style={styles.imageWrapper}>
-            {photoUri ? (
-              <Image source={{ uri: photoUri }} style={styles.profilePic} />
-            ) : (
-              <View style={[styles.profilePic, styles.profilePicPlaceholder]}>
-                <Text style={styles.profileInitial}>{displayName.charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.cameraIcon}
-              onPress={handleUploadImage}
-              disabled={avatarBusy}
-              accessibilityLabel="Change profile picture"
-            >
-              {avatarBusy
-                ? <ActivityIndicator color={colors.background} size="small" />
-                : <Ionicons name="camera" size={20} color={colors.background} />}
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.name}>{handle(displayName)}</Text>
-          <Text style={styles.subtitle}>{[profile?.email, profile?.city].filter(Boolean).join(' · ')}</Text>
-        </View>
-
-        <StatsBox
-          style={{ marginVertical: 30 }}
-          items={[
-            { icon: 'calendar-outline', title: 'Bookings', value: bookings === null ? '–' : String(bookings) },
-            { icon: 'heart-outline', title: 'Collections', value: collections === null ? '–' : String(collections) },
-          ]}
+        <CustomerProfileCard
+          name={account?.name ?? null}
+          username={account?.username || 'anonym'}
+          city={account?.city ?? null}
+          memberSince={account?.memberSince ?? null}
+          bookings={bookings}
+          collections={collections}
+          photoUri={photoUri}
+          onChangePhoto={handleUploadImage}
+          photoBusy={avatarBusy}
+          onAddName={openAccount}
         />
 
-        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-          <Text style={styles.signOutText}>Sign Out</Text>
+        <TouchableOpacity style={styles.row} onPress={openAccount} accessibilityRole="button">
+          <Ionicons name="person-outline" size={21} color={colors.ink} />
+          <Text style={styles.rowText}>Account settings</Text>
+          <Ionicons name="chevron-forward" size={19} color={colors.inkMuted} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('HowItWorks')} accessibilityRole="button">
+          <Ionicons name="sparkles-outline" size={21} color={colors.ink} />
+          <Text style={styles.rowText}>How it works</Text>
+          <Ionicons name="chevron-forward" size={19} color={colors.inkMuted} />
         </TouchableOpacity>
       </ScrollView>
-      {/* Settings, top right */}
-      <TouchableOpacity
-        style={styles.settingsBtn}
-        onPress={() => navigation.navigate('Settings')}
-        hitSlop={10}
-        accessibilityLabel="Settings"
-      >
-        <Ionicons name="settings-outline" size={26} color={colors.ink} />
-      </TouchableOpacity>
       <RefreshStar refreshing={pull.refreshing} y={130} />
-    </>
+    </SafeAreaView>
   );
 }
 
-// Matches ProfileCreator's header, avatar and sign-out styles.
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 20, paddingBottom: 32 },
-  header: { alignItems: 'center', marginTop: 100 },
-  settingsBtn: { position: 'absolute', top: 56, right: 20, padding: 4 },
-  imageWrapper: { position: 'relative', marginBottom: 15 },
-  profilePic: { width: 120, height: 120, borderRadius: 60, backgroundColor: colors.line },
-  profilePicPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  profileInitial: { fontSize: 46, fontWeight: '700', color: colors.wine },
-  cameraIcon: { position: 'absolute', bottom: 0, right: 5, backgroundColor: colors.ink, padding: 8, borderRadius: 20, borderWidth: 3, borderColor: colors.background },
-  name: { fontSize: 22, fontFamily: fonts.title, color: colors.ink },
-  subtitle: { fontSize: 14, color: colors.inkMuted, marginTop: 5 },
-  signOutButton: { backgroundColor: 'transparent', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 28, marginBottom: 10, borderWidth: 2, borderColor: colors.wine },
-  signOutText: { color: colors.wine, fontSize: 16, fontWeight: 'bold' },
+  settingsBtn: { padding: 4 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  rowText: { flex: 1, fontSize: 16, color: colors.ink },
 });

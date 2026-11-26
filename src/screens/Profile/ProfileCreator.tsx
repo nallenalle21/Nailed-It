@@ -3,10 +3,13 @@ import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { getMyOnboarding, type Onboarding } from '../../services/onboarding';
-import { handle } from '../../utils/handle';
 import { colors, fonts } from '../../theme';
 import { Text } from '../../components/AppText';
-import ReviewsCertificatesBox from '../../components/ReviewsCertificatesBox';   // in src/components use './AppText'
+import { PROTOTYPE_CERTIFICATES, PROTOTYPE_RATING } from '../../components/ReviewsCertificatesBox';
+import { ProfileCard, countStat, memberSinceStat } from '../../components/CustomerProfileCard';
+import PageHeader from '../../components/PageHeader';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { fetchMyAppointments } from '../../services/booking';
 import {
   View,
   Image,
@@ -54,6 +57,7 @@ export default function ProfileCreator({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [bookings, setBookings] = useState<number | null>(null);
   const [photos, setPhotos] = useState<PortfolioPhoto[]>([]);
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
@@ -77,7 +81,8 @@ export default function ProfileCreator({ navigation }: any) {
         if (profileError) throw profileError;
 
         // City lives on the auth account (user_metadata.city); profiles has no city column.
-        if (active) setProfile({ ...profileData, city: authData.user.user_metadata?.city ?? null });
+        if (active) setProfile({ ...profileData, city: authData.user.user_metadata?.city ?? null, memberSince: authData.user.created_at ?? null });
+        fetchMyAppointments('creator').then((rows) => active && setBookings(rows.length)).catch(() => active && setBookings(null));
         try {
           const url = await getVendorAvatarUrl(authData.user.id);
           if (active) setProfilePhotoUri(url);
@@ -109,19 +114,6 @@ export default function ProfileCreator({ navigation }: any) {
     void fetchProfile();
     return () => { active = false; };
   }, [pull.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSignOut = async () => {
-    try {
-      const { error: signOutError } = await supabase.auth.signOut();
-      if (signOutError) throw signOutError;
-    } catch (caughtError) {
-      console.error('[ProfileCreator] Could not sign out:', caughtError);
-      Alert.alert(
-        'Could not sign out',
-        caughtError instanceof Error ? caughtError.message : String(caughtError)
-      );
-    }
-  };
 
   const requestPhotoAccess = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -304,40 +296,46 @@ export default function ProfileCreator({ navigation }: any) {
   }));
 
   const selectedPhoto = photos.find(item => item.id === selectedPhotoId) ?? null;
-  const displayName = profile?.username || 'Studio Name';
+
+  const header = (
+    <PageHeader
+      title="My profile"
+      right={
+        <TouchableOpacity style={styles.settingsBtn} onPress={() => navigation.navigate('Settings')} hitSlop={10} accessibilityLabel="Settings">
+          <Ionicons name="settings-outline" size={24} color={colors.ink} />
+        </TouchableOpacity>
+      }
+    />
+  );
 
   if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color="#1D3979" />
-      </View>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {header}
+        <ActivityIndicator size="large" color={colors.wine} style={{ marginTop: 60 }} />
+      </SafeAreaView>
     );
   }
 
   return (
-    <>
-      <ScrollView refreshControl={<RefreshControl {...pull.control} />} style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} scrollEnabled={!dragId}>
-        <View style={styles.header}>
-          <View style={styles.imageWrapper}>
-            {profilePhotoUri ? (
-              <Image source={{ uri: profilePhotoUri }} style={styles.profilePic} />
-            ) : (
-              <View style={[styles.profilePic, styles.profilePicPlaceholder]}>
-                <Text style={styles.profileInitial}>{displayName.charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.cameraIcon}
-              onPress={handleUploadImage}
-              disabled={avatarBusy}
-              accessibilityLabel="Upload public profile picture"
-            >
-              {avatarBusy ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="camera" size={20} color="#fff" />}
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.name}>{handle(displayName)}</Text>
-          <Text style={styles.subtitle}>{[profile?.email, profile?.city].filter(Boolean).join(' · ')}</Text>
-        </View>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      {header}
+      <ScrollView refreshControl={<RefreshControl {...pull.control} />} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} scrollEnabled={!dragId}>
+        {/* Same layout as the customer profile: who you are left, the numbers right */}
+        <ProfileCard
+          name={profile?.display_name?.trim() || null}
+          username={profile?.username || 'studio'}
+          city={profile?.area || profile?.city || null}
+          photoUri={profilePhotoUri}
+          onChangePhoto={handleUploadImage}
+          photoBusy={avatarBusy}
+          stats={[
+            { value: `★ ${PROTOTYPE_RATING}`, label: 'reviews' },
+            { value: String(PROTOTYPE_CERTIFICATES), label: 'certificates' },
+            countStat(bookings, 'booking', 'bookings'),
+            memberSinceStat(profile?.memberSince ?? null),
+          ]}
+        />
 
         {setup && !setup.completed && (
           <TouchableOpacity style={styles.setupBanner} onPress={() => navigation.navigate('Onboarding')} accessibilityRole="button">
@@ -352,19 +350,6 @@ export default function ProfileCreator({ navigation }: any) {
             <Ionicons name="chevron-forward" size={20} color={colors.wine} />
           </TouchableOpacity>
         )}
-
-        <ReviewsCertificatesBox style={{ marginVertical: 30 }} />
-
-        <TouchableOpacity
-          style={styles.businessButton}
-          onPress={() => navigation.navigate('BusinessCreator')}
-        >
-          <View style={styles.businessButtonLeft}>
-            <Ionicons name="briefcase" size={22} color="#fff" style={{ marginRight: 10 }} />
-            <Text style={styles.businessButtonText}>Manage Business</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#fff" />
-        </TouchableOpacity>
 
         {/* Only creators use ProfileCreator; regular users use ProfileUser. */}
         <View style={styles.portfolioHeader}>
@@ -427,8 +412,16 @@ export default function ProfileCreator({ navigation }: any) {
           })()}
         </View>
 
-        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-          <Text style={styles.signOutText}>Sign Out</Text>
+        {/* Manage Business, under the portfolio */}
+        <TouchableOpacity
+          style={styles.businessButton}
+          onPress={() => navigation.navigate('BusinessCreator')}
+        >
+          <View style={styles.businessButtonLeft}>
+            <Ionicons name="briefcase" size={22} color="#fff" style={{ marginRight: 10 }} />
+            <Text style={styles.businessButtonText}>Manage Business</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#fff" />
         </TouchableOpacity>
       </ScrollView>
 
@@ -460,38 +453,21 @@ export default function ProfileCreator({ navigation }: any) {
           </View>
         </View>
       </Modal>
-      {/* Settings, top right */}
-      <TouchableOpacity
-        style={styles.settingsBtn}
-        onPress={() => navigation.navigate('Settings')}
-        hitSlop={10}
-        accessibilityLabel="Settings"
-      >
-        <Ionicons name="settings-outline" size={26} color={colors.ink} />
-      </TouchableOpacity>
       <RefreshStar refreshing={pull.refreshing} y={130} />
-    </>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.primarySoft },
+  container: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 20, paddingBottom: 32 },
-  header: { alignItems: 'center', marginTop: 100 },
-  settingsBtn: { position: 'absolute', top: 56, right: 20, padding: 4 },
-  imageWrapper: { position: 'relative', marginBottom: 15 },
-  profilePic: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#e0e0e0' },
-  profilePicPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  profileInitial: { fontSize: 46, fontWeight: '700', color: colors.danger },
-  cameraIcon: { position: 'absolute', bottom: 0, right: 5, backgroundColor: colors.text, padding: 8, borderRadius: 20, borderWidth: 3, borderColor: '#f9f9f9' },
-  name: { fontSize: 22, fontFamily: fonts.title, color: colors.ink },
-  subtitle: { fontSize: 14, color: '#716C83', marginTop: 5 },
-  setupBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20, padding: 16, borderRadius: 16, backgroundColor: colors.pinkTint, borderWidth: 1, borderColor: colors.pink },
+  settingsBtn: { padding: 4 },
+  setupBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: -6, marginBottom: 24, padding: 16, borderRadius: 16, backgroundColor: colors.pinkTint, borderWidth: 1, borderColor: colors.pink },
   setupTitle: { fontSize: 15, fontWeight: '700', color: colors.wine },
   setupText: { fontSize: 13, color: colors.ink, marginTop: 2 },
   setupTrack: { height: 6, borderRadius: 3, backgroundColor: 'rgba(11,21,14,0.08)', marginTop: 8, overflow: 'hidden' },
   setupFill: { height: '100%', borderRadius: 3, backgroundColor: colors.pink },
-  businessButton: { flexDirection: 'row', backgroundColor: colors.blue, padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, shadowColor: colors.blue, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+  businessButton: { flexDirection: 'row', backgroundColor: colors.blue, padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'space-between', marginTop: 28, shadowColor: colors.blue, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   businessButtonLeft: { flexDirection: 'row', alignItems: 'center' },
   businessButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   portfolioHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
@@ -506,8 +482,6 @@ const styles = StyleSheet.create({
   tilePlaceholderText: { fontSize: 11, color: '#8B8794', marginTop: 3 },
   dragPlaceholder: { opacity: 0.25 },
   dragGhost: { position: 'absolute', left: 0, top: 0, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 8 },
-  signOutButton: { backgroundColor: 'transparent', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 28, marginBottom: 10, borderWidth: 2, borderColor: colors.wine },
-  signOutText: { color: colors.wine, fontSize: 16, fontWeight: 'bold' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 16 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },

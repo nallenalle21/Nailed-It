@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Text } from '../../components/AppText';   // in src/components use './AppText'
-import { View, TextInput, TouchableOpacity, StyleSheet, Alert, findNodeHandle } from 'react-native';
+import { View, Image, TouchableOpacity, StyleSheet, Alert, findNodeHandle } from 'react-native';
+import { TextInput } from '../../components/AppTextInput';
 import SparkleStars, { type SparkleStarsHandle } from '../../components/SparkleStars';
 import { supabase } from '../../services/supabase';
 import { setStatusBarStyle } from 'expo-status-bar';
@@ -8,6 +9,12 @@ import { colors, fonts } from '../../theme';
 
 // Supabase allows one confirmation email per minute by default.
 const RESEND_SECONDS = 60;
+
+const SKY = require('../../../assets/images/sky.jpg');
+// Fills the page behind everything; ignores touches so taps on the sky still pop stars.
+const SkyBackground = () => (
+  <Image source={SKY} style={StyleSheet.absoluteFill} resizeMode="cover" pointerEvents="none" />
+);
 
 const isNotConfirmed = (error: { message?: string; code?: string }) =>
   error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message ?? '');
@@ -88,10 +95,11 @@ export default function LoginScreen() {
     }
   };
 
-  // After signing up: same blue page, asking the user to confirm their email.
+  // After signing up: same sky page, asking the user to confirm their email.
   if (pendingEmail) {
     return (
       <View style={styles.container}>
+        <SkyBackground />
         <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>Check Your Inbox</Text>
         <Text style={styles.message}>
           We sent a confirmation link to{'\n'}<Text style={styles.messageEmail}>{pendingEmail}</Text>
@@ -147,6 +155,7 @@ export default function LoginScreen() {
         if (isTap && onBackground) sparkles.current?.popAt(pageX, pageY);
       }}
     >
+      <SkyBackground />
       <SparkleStars ref={sparkles} shootingStars={false} />
       <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{isLogin ? 'Welcome Back' : 'Create Account'}</Text>
       
@@ -218,10 +227,10 @@ export default function LoginScreen() {
   );
 }
 
-// Same muted blue background as the Inspiration page; text in off-white #faf9f6,
+// Sky photo background (the palette's sky blue shows while it loads); text in off-white #faf9f6,
 // buttons in #15201F.
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 25, backgroundColor: colors.blueMuted },
+  container: { flex: 1, justifyContent: 'center', padding: 25, backgroundColor: colors.skyBlue },
   title: { fontSize: 30, fontFamily: fonts.title, color: colors.background, marginBottom: 30, textAlign: 'center' },
   input: { padding: 15, borderRadius: 10, marginBottom: 15, backgroundColor: colors.background, color: colors.ink },
   roleContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },

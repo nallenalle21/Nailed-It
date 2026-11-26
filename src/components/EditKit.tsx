@@ -1,16 +1,6 @@
 import type { ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  TextInput,
-  TouchableOpacity,
-  View,
-  type TextInputProps,
-} from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, TouchableOpacity, View, type TextInputProps } from 'react-native';
+import { TextInput } from './AppTextInput';
 import { Ionicons } from '@expo/vector-icons';
 import StarredTitle from './StarredTitle';
 import { Text } from './AppText';

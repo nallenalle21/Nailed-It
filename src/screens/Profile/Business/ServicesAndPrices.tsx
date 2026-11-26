@@ -6,17 +6,9 @@ import React, { useCallback, useState } from 'react';
 import { RefreshStar, useStarRefresh } from '../../../components/SparkleStars';
 import StarredTitle from '../../../components/StarredTitle';
 import { colors, fonts } from '../../../theme';
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-  RefreshControl,
-} from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, TouchableOpacity, View, RefreshControl } from 'react-native';
+import { Text } from '../../../components/AppText';
+import { TextInput } from '../../../components/AppTextInput';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../services/supabase';

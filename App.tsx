@@ -3,12 +3,12 @@ import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, AppState } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { supabase } from './src/services/supabase';
-import { colors, fonts } from './src/theme';
+import FloatingTabBar from './src/components/FloatingTabBar';
 import {
   clearBookingReminders,
   configureNotifications,
@@ -50,6 +50,10 @@ import ScheduleEdit from './src/screens/Profile/Edit/ScheduleEdit';
 import BookingRulesEdit from './src/screens/Profile/Edit/BookingRulesEdit';
 import NotificationsEdit from './src/screens/Profile/Edit/NotificationsEdit';
 import FAQ from './src/screens/Profile/FAQ';
+import Terms from './src/screens/Profile/Terms';
+import HowItWorks from './src/screens/Profile/HowItWorks';
+import AccountSettings from './src/screens/Profile/AccountSettings';
+import ExplorePreferences from './src/screens/Profile/ExplorePreferences';
 
 
 const Tab = createBottomTabNavigator();
@@ -58,12 +62,8 @@ const navigationRef = createNavigationContainerRef<any>();
 // Booking reminders show as a banner even while the app is open.
 configureNotifications();
 
-// Bottom menu: HORIZON labels (small), black when selected, softer black otherwise.
-const TAB_BAR_STYLE = {
-  tabBarActiveTintColor: colors.ink,
-  tabBarInactiveTintColor: colors.inkMuted,
-  tabBarLabelStyle: { fontFamily: fonts.title, fontSize: 7 }, // "INSPIRATION" must fit one tab (~78pt wide)
-};
+// Bottom menu: floating Instagram-style bar (src/components/FloatingTabBar.tsx) with HORIZON labels.
+const renderTabBar = (props: BottomTabBarProps) => <FloatingTabBar {...props} />;
 const Stack = createNativeStackNavigator();
 
 const getIcon = (name: string, focused: boolean) => {
@@ -91,10 +91,9 @@ function VendorsStack() {
 
 function CreatorTabs() {
   return (
-    <Tab.Navigator backBehavior="history" screenOptions={({ route }) => ({
+    <Tab.Navigator backBehavior="history" tabBar={renderTabBar} screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-      ...TAB_BAR_STYLE,
     })}>
       <Tab.Screen name="Explore" component={ExploreCreator} />
       <Tab.Screen name="Vendors" component={VendorsStack} options={{tabBarButton: () => null, tabBarItemStyle: { display: 'none' },}}/>
@@ -108,10 +107,9 @@ function CreatorTabs() {
 
 function UserTabs() {
   return (
-    <Tab.Navigator backBehavior="history" screenOptions={({ route }) => ({
+    <Tab.Navigator backBehavior="history" tabBar={renderTabBar} screenOptions={({ route }) => ({
       headerShown: false,
       tabBarIcon: ({ focused, color, size }) => <Ionicons name={getIcon(route.name, focused)} size={size} color={color} />,
-      ...TAB_BAR_STYLE,
     })}>
       <Tab.Screen name="Explore" component={ExploreUser} />
       <Tab.Screen name="Vendors" component={VendorsStack} options={{ tabBarButton: () => null, tabBarItemStyle: { display: 'none' } }} />
@@ -131,6 +129,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [fontsLoaded] = useFonts({
     Horizon: require('./assets/fonts/Horizon.otf'),
+    'GlacialIndifference-Regular': require('./assets/fonts/GlacialIndifference-Regular.otf'),
+    'GlacialIndifference-Bold': require('./assets/fonts/GlacialIndifference-Bold.otf'),
   });
 
   const fetchRole = async (userId: string) => {
@@ -234,6 +234,7 @@ export default function App() {
               <Stack.Screen name="EditBookingRules" component={BookingRulesEdit} />
               <Stack.Screen name="EditNotifications" component={NotificationsEdit} initialParams={{ role: 'creator' }} />
               <Stack.Screen name="FAQ" component={FAQ} />
+              <Stack.Screen name="Terms" component={Terms} />
             </Stack.Group>
           ) : (
             <Stack.Group>
@@ -241,6 +242,10 @@ export default function App() {
               <Stack.Screen name="Settings" component={Settings} initialParams={{ role: 'user' }} />
               <Stack.Screen name="EditNotifications" component={NotificationsEdit} initialParams={{ role: 'user' }} />
               <Stack.Screen name="FAQ" component={FAQ} />
+              <Stack.Screen name="Terms" component={Terms} />
+              <Stack.Screen name="HowItWorks" component={HowItWorks} />
+              <Stack.Screen name="AccountSettings" component={AccountSettings} />
+              <Stack.Screen name="ExplorePreferences" component={ExplorePreferences} />
               <Stack.Screen
                 name="ChatRoom"
                 component={ChatRoom}

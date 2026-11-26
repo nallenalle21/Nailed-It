@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 export const colors = {
   primary: '#c1e600',      // replaces 'tomato' (buttons, active icons, highlights)
   primarySoft: '#faf9f6',  // light tint (the "next up" card)
@@ -18,6 +16,7 @@ export const colors = {
   pink: '#FA89AB',         // hover-label text
   ink: '#0B150E',          // Horizon titles
   blue: '#3194B1',         // search icon, refresh icon
+  skyBlue: '#84b7c8',      // the "new blue" from the palette: login page (matches the sky photo)
   blueMuted: '#3E8DA4',    // #3194B1 with 20% less saturation: Inspiration page background
   blueDeep: '#0E2025',     // same blue, much darker: INSPIRATION title, pin counts
   grey: '#15201F',
@@ -25,7 +24,7 @@ export const colors = {
 };
 
 export const fonts = {
-  regular: Platform.select({ ios: 'Helvetica', default: undefined }),
-  bold: Platform.select({ ios: 'Helvetica-Bold', default: undefined }),
+  regular: 'GlacialIndifference-Regular', // loaded in App.tsx from assets/fonts/
+  bold: 'GlacialIndifference-Bold',
   title: 'Horizon', // loaded in App.tsx from assets/fonts/Horizon.otf
 };

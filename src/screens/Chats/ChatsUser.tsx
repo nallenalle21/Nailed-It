@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshStar, useStarRefresh } from '../../components/SparkleStars';
-import StarredTitle from '../../components/StarredTitle';
+import PageHeader from '../../components/PageHeader';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme';
 import { handle } from '../../utils/handle';
 import { View, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, RefreshControl } from 'react-native';
@@ -105,8 +106,8 @@ export default function ChatsUser({ navigation }: any) {
   );
 
   return (
-    <View style={styles.container}>
-      <StarredTitle style={styles.headerTitle} containerStyle={styles.headerTitleWrap}>My Chats</StarredTitle>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <PageHeader title="My Chats" star />
       <FlatList refreshControl={<RefreshControl {...pull.control} />}
         data={chats}
         keyExtractor={(item) => item.id}
@@ -117,17 +118,15 @@ export default function ChatsUser({ navigation }: any) {
       <RefreshStar refreshing={pull.refreshing} y={155} />
       {/* New chat: search usernames (bottom right) */}
       <NewChat navigation={navigation} role="user" />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  headerTitleWrap: { alignSelf: 'flex-start', marginHorizontal: 20, marginTop: 84, marginBottom: 10 },
   // Centres "no messages yet" in the space below the title
   emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 80 },
   emptyText: { color: colors.inkMuted, fontSize: 15 },
-  headerTitle: { fontSize: 24 },
   listContainer: { paddingHorizontal: 20, paddingBottom: 96 }, // room for the new-chat button
   chatItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line },
   avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15, backgroundColor: colors.line },
